@@ -18,7 +18,11 @@ func TestRunShutsDown(t *testing.T) {
 		t.Skip("TEST_REDIS_URL is not set")
 	}
 	_, dbURL := postgrestest.NewURL(t)
-	env := map[string]string{"APP_ENV": "test", "HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": dbURL, "REDIS_URL": redisURL}
+	env := map[string]string{"APP_ENV": "test", "HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": dbURL, "REDIS_URL": redisURL,
+		"MASTER_KEY":         "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+		"JWT_ACCESS_SECRET":  "test-access-secret-0123456789abcdef",
+		"JWT_REFRESH_SECRET": "test-refresh-secret-0123456789abcdef",
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {

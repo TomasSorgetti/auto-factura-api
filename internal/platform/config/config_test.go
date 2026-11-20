@@ -1,30 +1,103 @@
 package config
 
 import (
+	"bytes"
+	"encoding/base64"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
 
 const testDatabaseURL = "postgres://user:s3cret@localhost:5432/db?sslmode=disable"
 
+var testMasterKey = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
+
+var envDefaults = map[string]string{
+	"DATABASE_URL":       testDatabaseURL,
+	"REDIS_URL":          "redis://localhost:6379/0",
+	"MASTER_KEY":         testMasterKey,
+	"JWT_ACCESS_SECRET":  strings.Repeat("a", 32),
+	"JWT_REFRESH_SECRET": strings.Repeat("b", 32),
+}
+
 func mapEnv(m map[string]string) func(string) string {
 	return func(k string) string {
-		if k == "DATABASE_URL" {
-			if v, ok := m[k]; ok {
-				return v
-			}
-			return testDatabaseURL
+		if v, ok := m[k]; ok {
+			return v
 		}
-		if k == "REDIS_URL" {
-			if v, ok := m[k]; ok {
-				return v
-			}
-			return "redis://localhost:6379/0"
+		return envDefaults[k]
+	}
+}
+
+func TestLoadAuth(t *testing.T) {
+	t.Parallel()
+
+	prod := map[string]string{"APP_ENV": "production", "RESEND_API_KEY": "re_x", "EMAIL_FROM": "Auto <a@example.com>", "PUBLIC_BASE_URL": "https://app.example.com"}
+	with := func(base map[string]string, kv ...string) map[string]string {
+		m := maps.Clone(base)
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i]] = kv[i+1]
 		}
-		return m[k]
+		return m
+	}
+	dev := map[string]string{"APP_ENV": "development"}
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+	}{
+		{name: "defaults", env: dev},
+		{name: "production ok", env: prod},
+		{name: "master key missing", env: with(dev, "MASTER_KEY", ""), wantErr: "MASTER_KEY"},
+		{name: "master key not base64", env: with(dev, "MASTER_KEY", "***"), wantErr: "MASTER_KEY"},
+		{name: "master key 16 bytes", env: with(dev, "MASTER_KEY", base64.StdEncoding.EncodeToString(make([]byte, 16))), wantErr: "MASTER_KEY"},
+		{name: "access secret short", env: with(dev, "JWT_ACCESS_SECRET", "short"), wantErr: "JWT_ACCESS_SECRET"},
+		{name: "refresh secret short", env: with(dev, "JWT_REFRESH_SECRET", "short"), wantErr: "JWT_REFRESH_SECRET"},
+		{name: "equal secrets", env: with(dev, "JWT_REFRESH_SECRET", strings.Repeat("a", 32)), wantErr: "must differ"},
+		{name: "access ttl too short", env: with(dev, "ACCESS_TOKEN_TTL", "30s"), wantErr: "ACCESS_TOKEN_TTL"},
+		{name: "access ttl too long", env: with(dev, "ACCESS_TOKEN_TTL", "2h"), wantErr: "ACCESS_TOKEN_TTL"},
+		{name: "refresh ttl too short", env: with(dev, "REFRESH_TOKEN_TTL", "10m"), wantErr: "REFRESH_TOKEN_TTL"},
+		{name: "refresh ttl too long", env: with(dev, "REFRESH_TOKEN_TTL", "1000h"), wantErr: "REFRESH_TOKEN_TTL"},
+		{name: "argon2 memory low", env: with(dev, "ARGON2_MEMORY_KIB", "100"), wantErr: "ARGON2_MEMORY_KIB"},
+		{name: "argon2 time high", env: with(dev, "ARGON2_TIME", "11"), wantErr: "ARGON2_TIME"},
+		{name: "argon2 threads zero", env: with(dev, "ARGON2_THREADS", "0"), wantErr: "ARGON2_THREADS"},
+		{name: "production without resend", env: with(prod, "RESEND_API_KEY", ""), wantErr: "RESEND_API_KEY"},
+		{name: "email from invalid", env: with(prod, "EMAIL_FROM", "nope"), wantErr: "EMAIL_FROM"},
+		{name: "email from missing", env: with(prod, "EMAIL_FROM", ""), wantErr: "EMAIL_FROM"},
+		{name: "base url with path", env: with(dev, "PUBLIC_BASE_URL", "http://localhost:5173/x"), wantErr: "PUBLIC_BASE_URL"},
+		{name: "base url http in production", env: with(prod, "PUBLIC_BASE_URL", "http://app.example.com"), wantErr: "PUBLIC_BASE_URL"},
+		{name: "invalid tz", env: with(dev, "BUSINESS_TZ", "Mars/Olympus"), wantErr: "BUSINESS_TZ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := Load(mapEnv(tt.env))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected %s error, got %v", tt.wantErr, err)
+				}
+				for _, secret := range []string{strings.Repeat("a", 32), strings.Repeat("b", 32), testMasterKey, "re_x"} {
+					if strings.Contains(err.Error(), secret) {
+						t.Fatalf("error leaks a secret: %v", err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cfg.MasterKey.Reveal()) != 32 || cfg.AccessTokenTTL != 15*time.Minute || cfg.RefreshTokenTTL != 168*time.Hour ||
+				cfg.Argon2 != (secrets.Argon2Params{MemoryKiB: 19456, Time: 2, Threads: 1}) ||
+				cfg.BusinessLocation == nil || cfg.BusinessLocation.String() != "America/Argentina/Buenos_Aires" {
+				t.Fatalf("unexpected defaults: %+v", cfg)
+			}
+		})
 	}
 }
 
@@ -130,7 +203,10 @@ func TestLoadCORSAllowedOrigins(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := Load(mapEnv(map[string]string{"APP_ENV": tt.env, "CORS_ALLOWED_ORIGINS": tt.value}))
+			cfg, err := Load(mapEnv(map[string]string{
+				"APP_ENV": tt.env, "CORS_ALLOWED_ORIGINS": tt.value,
+				"RESEND_API_KEY": "re_x", "EMAIL_FROM": "a@example.com", "PUBLIC_BASE_URL": "https://app.example.com",
+			}))
 			if tt.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "CORS_ALLOWED_ORIGINS") {
 					t.Fatalf("expected CORS_ALLOWED_ORIGINS error, got %v", err)

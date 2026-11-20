@@ -2,9 +2,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
 
 type Env string
@@ -39,6 +42,17 @@ type Config struct {
 	DBStatementTimeout time.Duration
 
 	RedisURL logx.Secret
+
+	MasterKey        logx.Secret
+	JWTAccessSecret  logx.Secret
+	JWTRefreshSecret logx.Secret
+	AccessTokenTTL   time.Duration
+	RefreshTokenTTL  time.Duration
+	Argon2           secrets.Argon2Params
+	ResendAPIKey     logx.Secret
+	EmailFrom        string
+	PublicBaseURL    string
+	BusinessLocation *time.Location
 }
 
 func (c Config) IsProduction() bool { return c.Env == EnvProduction }
@@ -187,10 +201,135 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 
+	errs = append(errs, loadAuth(getenv, &cfg)...)
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+func loadAuth(getenv func(string) string, cfg *Config) []error {
+	var errs []error
+
+	if key, err := parseMasterKey(getenv("MASTER_KEY")); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.MasterKey = key
+	}
+
+	access := getenv("JWT_ACCESS_SECRET")
+	refresh := getenv("JWT_REFRESH_SECRET")
+	if len(access) < minJWTSecretLen {
+		errs = append(errs, errors.New("JWT_ACCESS_SECRET: is required and must be at least 32 bytes"))
+	}
+	if len(refresh) < minJWTSecretLen {
+		errs = append(errs, errors.New("JWT_REFRESH_SECRET: is required and must be at least 32 bytes"))
+	}
+	if access != "" && access == refresh {
+		errs = append(errs, errors.New("JWT_REFRESH_SECRET: must differ from JWT_ACCESS_SECRET"))
+	}
+	cfg.JWTAccessSecret = logx.Secret(access)
+	cfg.JWTRefreshSecret = logx.Secret(refresh)
+
+	var err error
+	if cfg.AccessTokenTTL, err = durationBetween(getenv, "ACCESS_TOKEN_TTL", 15*time.Minute, time.Minute, time.Hour); err != nil {
+		errs = append(errs, err)
+	}
+	if cfg.RefreshTokenTTL, err = durationBetween(getenv, "REFRESH_TOKEN_TTL", 168*time.Hour, time.Hour, 720*time.Hour); err != nil {
+		errs = append(errs, err)
+	}
+
+	cfg.Argon2 = secrets.Argon2Params{MemoryKiB: 19456, Time: 2, Threads: 1}
+	if v, err := uintBetween(getenv, "ARGON2_MEMORY_KIB", 8192, 262144); err != nil {
+		errs = append(errs, err)
+	} else if v != 0 {
+		cfg.Argon2.MemoryKiB = uint32(v)
+	}
+	if v, err := uintBetween(getenv, "ARGON2_TIME", 1, 10); err != nil {
+		errs = append(errs, err)
+	} else if v != 0 {
+		cfg.Argon2.Time = uint32(v)
+	}
+	if v, err := uintBetween(getenv, "ARGON2_THREADS", 1, 8); err != nil {
+		errs = append(errs, err)
+	} else if v != 0 {
+		cfg.Argon2.Threads = uint8(v)
+	}
+
+	cfg.ResendAPIKey = logx.Secret(getenv("RESEND_API_KEY"))
+	if cfg.IsProduction() && cfg.ResendAPIKey == "" {
+		errs = append(errs, errors.New("RESEND_API_KEY: is required in production"))
+	}
+	if from := getenv("EMAIL_FROM"); from != "" {
+		if _, err := mail.ParseAddress(from); err != nil {
+			errs = append(errs, errors.New("EMAIL_FROM: must be a valid address such as Name <user@example.com>"))
+		} else {
+			cfg.EmailFrom = from
+		}
+	} else if cfg.ResendAPIKey != "" {
+		errs = append(errs, errors.New("EMAIL_FROM: is required when RESEND_API_KEY is set"))
+	}
+
+	cfg.PublicBaseURL = "http://localhost:5173"
+	if v := getenv("PUBLIC_BASE_URL"); v != "" {
+		cfg.PublicBaseURL = v
+	}
+	if err := validateBaseURL(cfg.PublicBaseURL, cfg.IsProduction()); err != nil {
+		errs = append(errs, err)
+	}
+
+	tz := "America/Argentina/Buenos_Aires"
+	if v := getenv("BUSINESS_TZ"); v != "" {
+		tz = v
+	}
+	if loc, err := time.LoadLocation(tz); err != nil {
+		errs = append(errs, errors.New("BUSINESS_TZ: must be a valid IANA time zone"))
+	} else {
+		cfg.BusinessLocation = loc
+	}
+
+	return errs
+}
+
+const minJWTSecretLen = 32
+
+func parseMasterKey(v string) (logx.Secret, error) {
+	if v == "" {
+		return "", errors.New("MASTER_KEY: is required")
+	}
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil || len(b) != 32 {
+		return "", errors.New("MASTER_KEY: must be base64 of exactly 32 bytes")
+	}
+	return logx.Secret(string(b)), nil
+}
+
+func validateBaseURL(v string, production bool) error {
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+		return errors.New("PUBLIC_BASE_URL: must be http(s)://host[:port]")
+	}
+	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" {
+		return errors.New("PUBLIC_BASE_URL: must not have a path, query or user info")
+	}
+	if production && u.Scheme != "https" {
+		return errors.New("PUBLIC_BASE_URL: must use https in production")
+	}
+	return nil
+}
+
+// uintBetween returns 0 when the variable is unset.
+func uintBetween(getenv func(string) string, key string, lo, hi uint64) (uint64, error) {
+	v := getenv(key)
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil || n < lo || n > hi {
+		return 0, fmt.Errorf("%s: must be an integer between %d and %d", key, lo, hi)
+	}
+	return n, nil
 }
 
 func parseOrigins(list string, production bool) ([]string, error) {
