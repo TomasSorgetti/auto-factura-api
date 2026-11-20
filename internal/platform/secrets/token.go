@@ -8,7 +8,11 @@ import (
 )
 
 // RandomToken returns n random bytes encoded as base64url without padding.
+// n must be at least 16.
 func RandomToken(n int) (string, error) {
+	if n < 16 {
+		return "", fmt.Errorf("random token: need at least 16 bytes, got %d", n)
+	}
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("read random bytes: %w", err)

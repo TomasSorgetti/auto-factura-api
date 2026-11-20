@@ -23,3 +23,25 @@ func TestRandomToken(t *testing.T) {
 		t.Fatal("unexpected token hashes")
 	}
 }
+
+func TestRandomTokenLength(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		n       int
+		wantLen int
+		wantErr bool
+	}{
+		{n: -1, wantErr: true},
+		{n: 0, wantErr: true},
+		{n: 15, wantErr: true},
+		{n: 16, wantLen: 22},
+		{n: 32, wantLen: 43},
+	}
+	for _, tt := range tests {
+		got, err := RandomToken(tt.n)
+		if (err != nil) != tt.wantErr || len(got) != tt.wantLen {
+			t.Errorf("RandomToken(%d) = %q, %v", tt.n, got, err)
+		}
+	}
+}

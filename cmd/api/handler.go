@@ -15,9 +15,9 @@ func newHandler(cfg config.Config, log *slog.Logger, errs *httpx.ErrorMapper, rt
 		return nil, fmt.Errorf("cross-origin protection: %w", err)
 	}
 	return httpx.Chain(rt,
-		httpx.Recover(log, errs),
 		httpx.RequestID(),
 		httpx.Logger(log),
+		httpx.Recover(log, errs),
 		httpx.SecurityHeaders(),
 		httpx.CORS(cfg.CORSAllowedOrigins, errs),
 		httpx.Timeout(cfg.RequestTimeout),

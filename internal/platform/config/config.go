@@ -286,7 +286,7 @@ func loadAuth(getenv func(string) string, cfg *Config) []error {
 
 	cfg.PublicBaseURL = "http://localhost:5173"
 	if v := getenv("PUBLIC_BASE_URL"); v != "" {
-		cfg.PublicBaseURL = v
+		cfg.PublicBaseURL = strings.TrimRight(v, "/")
 	}
 	if err := validateBaseURL(cfg.PublicBaseURL, cfg.IsProduction()); err != nil {
 		errs = append(errs, err)

@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
@@ -13,8 +14,13 @@ func TestMigrationsUpDownUp(t *testing.T) {
 	pool := postgrestest.NewEmpty(t)
 	ctx := context.Background()
 
-	if err := postgres.CheckSchema(ctx, pool); err == nil {
-		t.Fatal("CheckSchema passed with pending migrations")
+	err := postgres.CheckSchema(ctx, pool)
+	if err == nil || !strings.Contains(err.Error(), "has no schema") {
+		t.Fatalf("CheckSchema on empty database = %v", err)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.goose_db_version') IS NOT NULL`).Scan(&exists); err != nil || exists {
+		t.Fatalf("CheckSchema created the version table: exists=%v err=%v", exists, err)
 	}
 
 	m, err := postgres.NewMigrator(pool, true)
@@ -40,8 +46,8 @@ func TestMigrationsUpDownUp(t *testing.T) {
 			t.Fatalf("down: %v", err)
 		}
 	}
-	if err := postgres.CheckSchema(ctx, pool); err == nil {
-		t.Fatal("CheckSchema passed after down to zero")
+	if err := postgres.CheckSchema(ctx, pool); err == nil || !strings.Contains(err.Error(), "pending migrations") {
+		t.Fatalf("CheckSchema after down to zero = %v", err)
 	}
 
 	again, err := m.Up(ctx)

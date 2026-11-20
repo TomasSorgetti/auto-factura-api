@@ -101,6 +101,18 @@ func TestLoadAuth(t *testing.T) {
 	}
 }
 
+func TestLoadPublicBaseURLTrailingSlash(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(mapEnv(map[string]string{"APP_ENV": "development", "PUBLIC_BASE_URL": "https://x.com/"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PublicBaseURL != "https://x.com" {
+		t.Fatalf("PublicBaseURL = %q", cfg.PublicBaseURL)
+	}
+}
+
 func TestLoadRedis(t *testing.T) {
 	t.Parallel()
 

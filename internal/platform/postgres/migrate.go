@@ -63,7 +63,18 @@ func (m *Migrator) Close() error { return m.provider.Close() }
 
 // CheckSchema fails when the embedded migrations include versions that the
 // database has not applied. A schema newer than the binary is not an error.
+//
+// It only reads: a database without the goose version table is reported as
+// having no schema instead of being initialised.
 func CheckSchema(ctx context.Context, pool *pgxpool.Pool) (err error) {
+	var hasVersionTable bool
+	if err := pool.QueryRow(ctx, `SELECT to_regclass('public.goose_db_version') IS NOT NULL`).Scan(&hasVersionTable); err != nil {
+		return fmt.Errorf("check schema: %w", err)
+	}
+	if !hasVersionTable {
+		return errors.New("database has no schema: run go run ./cmd/migrate up")
+	}
+
 	m, err := NewMigrator(pool, false)
 	if err != nil {
 		return err
