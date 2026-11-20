@@ -15,6 +15,7 @@ import (
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/redisx"
 )
 
 func run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
@@ -42,11 +43,26 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		return err
 	}
 
-	queries := sqlc.New(pool)
-	checks := []health.Check{{Name: "postgres", Ping: func(ctx context.Context) error {
-		_, err := queries.Ping(ctx)
+	rdb, err := redisx.New(ctx, cfg.RedisURL)
+	if err != nil {
 		return err
-	}}}
+	}
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			log.Warn("close redis", "err", err)
+		}
+	}()
+
+	queries := sqlc.New(pool)
+	checks := []health.Check{
+		{Name: "postgres", Ping: func(ctx context.Context) error {
+			_, err := queries.Ping(ctx)
+			return err
+		}},
+		{Name: "redis", Ping: func(ctx context.Context) error {
+			return rdb.Ping(ctx).Err()
+		}},
+	}
 
 	errs := httpx.NewErrorMapper(log, errorRules())
 	rt, err := newRouter(routerDeps{log: log, errors: errs, checks: checks})

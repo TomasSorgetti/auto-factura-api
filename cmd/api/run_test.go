@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -12,8 +13,12 @@ import (
 func TestRunShutsDown(t *testing.T) {
 	t.Parallel()
 
+	redisURL := os.Getenv("TEST_REDIS_URL")
+	if redisURL == "" {
+		t.Skip("TEST_REDIS_URL is not set")
+	}
 	_, dbURL := postgrestest.NewURL(t)
-	env := map[string]string{"APP_ENV": "test", "HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": dbURL}
+	env := map[string]string{"APP_ENV": "test", "HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": dbURL, "REDIS_URL": redisURL}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {

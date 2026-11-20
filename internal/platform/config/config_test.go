@@ -18,7 +18,27 @@ func mapEnv(m map[string]string) func(string) string {
 			}
 			return testDatabaseURL
 		}
+		if k == "REDIS_URL" {
+			if v, ok := m[k]; ok {
+				return v
+			}
+			return "redis://localhost:6379/0"
+		}
 		return m[k]
+	}
+}
+
+func TestLoadRedis(t *testing.T) {
+	t.Parallel()
+
+	for _, url := range []string{"", "http://s3cret@host/0"} {
+		_, err := Load(mapEnv(map[string]string{"APP_ENV": "test", "REDIS_URL": url}))
+		if err == nil || !strings.Contains(err.Error(), "REDIS_URL") {
+			t.Fatalf("url %q: expected REDIS_URL error, got %v", url, err)
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Fatalf("error leaks the url: %v", err)
+		}
 	}
 }
 

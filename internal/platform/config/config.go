@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 )
@@ -36,6 +37,8 @@ type Config struct {
 	DatabaseURL        logx.Secret
 	DBMaxConns         int32
 	DBStatementTimeout time.Duration
+
+	RedisURL logx.Secret
 }
 
 func (c Config) IsProduction() bool { return c.Env == EnvProduction }
@@ -83,6 +86,17 @@ func parseDatabaseURL(getenv func(string) string) (logx.Secret, error) {
 	return logx.Secret(v), nil
 }
 
+func parseRedisURL(getenv func(string) string) (logx.Secret, error) {
+	v := getenv("REDIS_URL")
+	if v == "" {
+		return "", errors.New("REDIS_URL: is required")
+	}
+	if _, err := redis.ParseURL(v); err != nil {
+		return "", errors.New("REDIS_URL: invalid url")
+	}
+	return logx.Secret(v), nil
+}
+
 // Load reads the configuration through getenv and reports every invalid
 // variable at once.
 func Load(getenv func(string) string) (Config, error) {
@@ -108,6 +122,12 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, err)
 	} else {
 		cfg.DatabaseURL = dbURL
+	}
+
+	if redisURL, err := parseRedisURL(getenv); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.RedisURL = redisURL
 	}
 
 	if v := getenv("DB_MAX_CONNS"); v != "" {
