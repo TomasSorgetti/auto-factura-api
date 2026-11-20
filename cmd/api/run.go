@@ -9,6 +9,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 )
 
@@ -19,13 +20,17 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 	log := logx.New(stdout, cfg.LogLevel, cfg.LogFormat)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":{"status":"ok"}}`)
-	})
+	errs := httpx.NewErrorMapper(log, errorRules())
+	rt, err := newRouter(routerDeps{log: log, errors: errs})
+	if err != nil {
+		return err
+	}
+	h, err := newHandler(cfg, log, errs, rt)
+	if err != nil {
+		return err
+	}
 
-	srv := newServer(cfg, mux, log)
+	srv := newServer(cfg, h, log)
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
