@@ -49,8 +49,6 @@ type Config struct {
 	AccessTokenTTL   time.Duration
 	RefreshTokenTTL  time.Duration
 	Argon2           secrets.Argon2Params
-	ResendAPIKey     logx.Secret
-	EmailFrom        string
 	PublicBaseURL    string
 	BusinessLocation *time.Location
 }
@@ -341,10 +339,6 @@ func loadAuth(getenv func(string) string, cfg *Config) []error {
 	argon2, argonErrs := loadArgon2(getenv)
 	cfg.Argon2 = argon2
 	errs = append(errs, argonErrs...)
-
-	key, from, resendErrs := loadResend(getenv, cfg.IsProduction())
-	cfg.ResendAPIKey, cfg.EmailFrom = key, from
-	errs = append(errs, resendErrs...)
 
 	cfg.PublicBaseURL = "http://localhost:5173"
 	if v := getenv("PUBLIC_BASE_URL"); v != "" {

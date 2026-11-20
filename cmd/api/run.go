@@ -68,8 +68,13 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 		}},
 	}
 
+	jobs, err := queue.NewInsertOnly(pool, log)
+	if err != nil {
+		return err
+	}
+
 	errs := httpx.NewErrorMapper(log, errorRules())
-	authHandler, requireAdmin, err := newAuth(cfg, log, errs, pool, rdb)
+	authHandler, requireAdmin, err := newAuth(cfg, log, errs, pool, rdb, jobs)
 	if err != nil {
 		return err
 	}

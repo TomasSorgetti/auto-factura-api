@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/audit"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
@@ -46,10 +47,11 @@ type Sessions struct {
 	store  *Store
 	tokens *Tokens
 	log    *slog.Logger
+	audit  Auditor
 }
 
-func NewSessions(store *Store, tokens *Tokens, log *slog.Logger) *Sessions {
-	return &Sessions{store: store, tokens: tokens, log: log}
+func NewSessions(store *Store, tokens *Tokens, log *slog.Logger, audit Auditor) *Sessions {
+	return &Sessions{store: store, tokens: tokens, log: log, audit: audit}
 }
 
 func (s *Sessions) mint(ctx context.Context, st *Store, userID string, meta ClientMeta) (IssuedSession, string, error) {
@@ -162,6 +164,7 @@ func (s *Sessions) Refresh(ctx context.Context, raw string, meta ClientMeta) (Is
 	}
 	if replayedID != "" {
 		s.log.WarnContext(ctx, "refresh token replayed", "token_id", replayedID)
+		recordEvent(ctx, s.audit, audit.Event{Actor: adminActor(sub, meta.IP), Action: audit.ActionRefreshReplay})
 		return IssuedSession{}, ErrSessionInvalid
 	}
 	return out, nil
@@ -173,12 +176,13 @@ func matches(row *refreshRow, sub, raw string) bool {
 }
 
 // Logout revokes the presented refresh token. An invalid or unknown token is not an error.
-func (s *Sessions) Logout(ctx context.Context, raw string) error {
+func (s *Sessions) Logout(ctx context.Context, raw string, meta ClientMeta) error {
 	sub, jti, err := s.tokens.VerifyRefresh(raw)
 	if err != nil {
 		return nil
 	}
-	return s.store.InTx(ctx, func(st *Store) error {
+	revoked := false
+	err = s.store.InTx(ctx, func(st *Store) error {
 		if _, err := st.lockSessionState(ctx, sub); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return nil
@@ -192,8 +196,19 @@ func (s *Sessions) Logout(ctx context.Context, raw string) error {
 		if !matches(row, sub, raw) {
 			return nil
 		}
-		return st.revoke(ctx, row.ID, s.tokens.now())
+		if err := st.revoke(ctx, row.ID, s.tokens.now()); err != nil {
+			return err
+		}
+		revoked = true
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if revoked {
+		recordEvent(ctx, s.audit, audit.Event{Actor: adminActor(sub, meta.IP), Action: audit.ActionLogout})
+	}
+	return nil
 }
 
 func (s *Sessions) Authenticate(ctx context.Context, rawAccess string) (Principal, error) {

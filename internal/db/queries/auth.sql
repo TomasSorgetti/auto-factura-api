@@ -83,6 +83,3 @@ SELECT max(alerted_at)::timestamptz FROM admin_login_devices WHERE user_id = $1;
 
 -- name: MarkLoginDeviceAlerted :exec
 UPDATE admin_login_devices SET alerted_at = $2 WHERE id = $1;
-
--- name: DeleteUnalertedLoginDevice :exec
-DELETE FROM admin_login_devices WHERE id = $1 AND alerted_at IS NULL;

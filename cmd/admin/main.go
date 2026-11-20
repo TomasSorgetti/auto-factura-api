@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -104,7 +105,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdin i
 		return err
 	}
 
-	accounts := auth.NewAccounts(pool, hasher)
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	accounts := auth.NewAccounts(pool, hasher, auth.NewSecurityAuditor(pool, log))
 	switch opts.cmd {
 	case "create-user":
 		password, generated, err := obtainPassword(stdin, opts.passwordStdin)

@@ -277,7 +277,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) error {
 	if raw := cookieValue(r, cookieRefresh); raw != "" {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), logoutTimeout)
 		defer cancel()
-		if err := h.sessions.Logout(ctx, raw); err != nil {
+		if err := h.sessions.Logout(ctx, raw, clientMeta(r)); err != nil {
 			h.log.WarnContext(ctx, "logout revoke failed", "err", err)
 		}
 	}

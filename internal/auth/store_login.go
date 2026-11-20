@@ -160,10 +160,3 @@ func (s *Store) markLoginDeviceAlerted(ctx context.Context, id pgtype.UUID, at t
 	}
 	return nil
 }
-
-func (s *Store) deleteUnalertedLoginDevice(ctx context.Context, id pgtype.UUID) error {
-	if err := s.q.DeleteUnalertedLoginDevice(ctx, id); err != nil {
-		return fmt.Errorf("delete unalerted login device: %w", err)
-	}
-	return nil
-}

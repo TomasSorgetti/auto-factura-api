@@ -129,15 +129,6 @@ func (q *Queries) DeleteRecoveryCodes(ctx context.Context, userID pgtype.UUID) e
 	return err
 }
 
-const deleteUnalertedLoginDevice = `-- name: DeleteUnalertedLoginDevice :exec
-DELETE FROM admin_login_devices WHERE id = $1 AND alerted_at IS NULL
-`
-
-func (q *Queries) DeleteUnalertedLoginDevice(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteUnalertedLoginDevice, id)
-	return err
-}
-
 const enableAdminTOTP = `-- name: EnableAdminTOTP :execrows
 UPDATE admin_users SET totp_secret_enc = $2, totp_enabled_at = now(), totp_last_step = $3
 WHERE id = $1 AND totp_enabled_at IS NULL

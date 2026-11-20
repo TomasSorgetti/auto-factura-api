@@ -18,9 +18,10 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/TomasSorgetti/auto-factura-api/internal/emails/emailstest"
+	"github.com/TomasSorgetti/auto-factura-api/internal/emails"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres/postgrestest"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/queue"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/redisx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
@@ -33,7 +34,6 @@ type loginEnv struct {
 	rdb    *redis.Client
 	cipher *secrets.Cipher
 	email  string
-	mail   *emailstest.Fake
 }
 
 func newLoginEnv(t *testing.T) *loginEnv {
@@ -79,28 +79,32 @@ func newLoginEnv(t *testing.T) *loginEnv {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := NewStore(pool)
-	sessions := NewSessions(store, tk, log)
+	auditor := newTestAuditor(pool)
+	sessions := NewSessions(store, tk, log, auditor)
 	limiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{
 		Prefix: prefix + ":rl", MaxFailures: 5, Window: 15 * time.Minute, MaxBlock: 24 * time.Hour,
 	})
 	pwLimiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{
 		Prefix: prefix + ":rlg", MaxFailures: 50, Window: time.Hour, MaxBlock: 5 * time.Minute,
 	})
-	mail := &emailstest.Fake{}
-	devices, err := NewDeviceTracker(DeviceTrackerDeps{Store: store, Sender: mail, Log: log, Loc: time.UTC})
+	client, err := queue.NewInsertOnly(pool, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	devices, err := NewDeviceTracker(DeviceTrackerDeps{Store: store, Outbox: emails.NewOutbox(client), Log: log, Loc: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
 	login, err := NewLogin(LoginDeps{
 		Store: store, Sessions: sessions, Cipher: cipher, Hasher: hasher, Limiter: limiter, PasswordLimiter: pwLimiter,
-		Redis: rdb, Devices: devices, ChallengePrefix: prefix + ":ch", Log: log,
+		Redis: rdb, Devices: devices, Audit: auditor, ChallengePrefix: prefix + ":ch", Log: log,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &loginEnv{
 		sessionEnv: &sessionEnv{pool: pool, sessions: sessions, clock: clock, userID: userID},
-		login:      login, rdb: rdb, cipher: cipher, email: email, mail: mail,
+		login:      login, rdb: rdb, cipher: cipher, email: email,
 	}
 }
 
@@ -456,7 +460,7 @@ func TestRescueInvalidatesPendingChallenges(t *testing.T) {
 			e := newLoginEnv(t)
 			secret := e.enableTOTP(t)
 			s := e.start(t)
-			if err := tc.rescue(NewAccounts(e.pool, hasher)); err != nil {
+			if err := tc.rescue(NewAccounts(e.pool, hasher, nil)); err != nil {
 				t.Fatal(err)
 			}
 			ctx := context.Background()
@@ -487,9 +491,8 @@ func TestLoginTracksDevice(t *testing.T) {
 	if !isDeviceID(res.DeviceID) {
 		t.Fatalf("device id = %q", res.DeviceID)
 	}
-	sent := e.mail.Sent()
-	if len(sent) != 1 || sent[0].Subject != newDeviceSubject {
-		t.Fatalf("sent = %+v", sent)
+	if n := count(t, e.pool, `SELECT count(*) FROM email_deliveries WHERE kind = 'device_alert' AND subject = '`+newDeviceSubject+`'`); n != 1 {
+		t.Fatalf("device alert deliveries = %d", n)
 	}
 }
 
@@ -500,5 +503,74 @@ func TestNewLoginRequiresDevices(t *testing.T) {
 	}
 	if _, err := NewDeviceTracker(DeviceTrackerDeps{}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLoginAudit(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("wrong password", func(t *testing.T) {
+		e := newLoginEnv(t)
+		if _, err := e.login.Start(ctx, e.email, "nope", "9.9.9.9"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatal(err)
+		}
+		rows := auditEvents(t, e.pool, "auth.login_failed")
+		if len(rows) != 1 || rows[0].actorType != "anonymous" || rows[0].ip != "9.9.9.9" {
+			t.Fatalf("rows = %+v", rows)
+		}
+		if strings.Contains(rows[0].data, "example.com") || !strings.Contains(rows[0].data, `"password"`) || !strings.Contains(rows[0].data, `"invalid"`) {
+			t.Fatalf("data = %s", rows[0].data)
+		}
+	})
+
+	t.Run("full login", func(t *testing.T) {
+		e := newLoginEnv(t)
+		secret := e.enableTOTP(t)
+		s := e.start(t)
+		if _, err := e.login.VerifyTOTP(ctx, s.ChallengeToken.Reveal(), "000000", meta); !errors.Is(err, ErrInvalidTOTP) {
+			t.Fatalf("err = %v", err)
+		}
+		if rows := auditEvents(t, e.pool, "auth.login_failed"); len(rows) != 1 || !strings.Contains(rows[0].data, `"totp"`) {
+			t.Fatalf("failed rows = %+v", rows)
+		}
+		if _, err := e.login.VerifyTOTP(ctx, s.ChallengeToken.Reveal(), codeFor(t, secret, time.Now()), meta); err != nil {
+			t.Fatal(err)
+		}
+		rows := auditEvents(t, e.pool, "auth.login_succeeded")
+		if len(rows) != 1 || rows[0].actorType != "admin" || rows[0].ip != "1.1.1.1" || !strings.Contains(rows[0].data, `"totp"`) {
+			t.Fatalf("rows = %+v", rows)
+		}
+	})
+
+	t.Run("rate limited", func(t *testing.T) {
+		e := newLoginEnv(t)
+		for i := 0; i < 5; i++ {
+			if _, err := e.login.Start(ctx, e.email, "nope", "9.9.9.9"); !errors.Is(err, ErrInvalidCredentials) {
+				t.Fatal(err)
+			}
+		}
+		for i := 0; i < 4; i++ {
+			if _, err := e.login.Start(ctx, e.email, loginPassword, "9.9.9.9"); !errors.Is(err, ErrTooManyAttempts) {
+				t.Fatalf("err = %v", err)
+			}
+		}
+		n := count(t, e.pool, `SELECT count(*) FROM audit_events WHERE action = 'auth.login_failed' AND data->>'reason' = 'rate_limited'`)
+		if n != 1 {
+			t.Fatalf("rate limited events = %d", n)
+		}
+	})
+}
+
+func TestAuditFailureDoesNotBlockLogin(t *testing.T) {
+	ctx := context.Background()
+	e := newLoginEnv(t)
+	e.login.audit = NewSecurityAuditor(failingDB{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	secret := e.enableTOTP(t)
+	s := e.start(t)
+	if _, err := e.login.VerifyTOTP(ctx, s.ChallengeToken.Reveal(), codeFor(t, secret, time.Now()), meta); err != nil {
+		t.Fatalf("login with failing auditor: %v", err)
+	}
+	if _, err := e.login.Start(ctx, e.email, "nope", "9.9.9.9"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v", err)
 	}
 }

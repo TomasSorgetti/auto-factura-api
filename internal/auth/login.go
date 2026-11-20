@@ -5,14 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/audit"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/redisx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
+)
+
+const (
+	auditStagePassword = "password"
+	auditStageTOTP     = "totp"
+	auditStageRecovery = "recovery_code"
+
+	rateLimitAuditTTL = 15 * time.Minute
 )
 
 // accountKey counts only second-factor attempts, so wrong passwords from a
@@ -65,6 +75,7 @@ type LoginDeps struct {
 	PasswordLimiter *redisx.Limiter
 	Redis           *redis.Client
 	Devices         *DeviceTracker
+	Audit           Auditor
 	ChallengePrefix string
 	Log             *slog.Logger
 	Now             func() time.Time
@@ -80,6 +91,7 @@ type Login struct {
 	pwLimiter  *redisx.Limiter
 	challenges *challengeStore
 	devices    *DeviceTracker
+	audit      Auditor
 	log        *slog.Logger
 	now        func() time.Time
 }
@@ -108,6 +120,7 @@ func NewLogin(d LoginDeps) (*Login, error) {
 		pwLimiter:  d.PasswordLimiter,
 		challenges: &challengeStore{rdb: d.Redis, prefix: prefix, now: now},
 		devices:    d.Devices,
+		audit:      d.Audit,
 		log:        d.Log,
 		now:        now,
 	}, nil
@@ -154,7 +167,50 @@ func (l *Login) finish(ctx context.Context, token string, user *adminUser, ip st
 	}
 	result.Session = session
 	result.DeviceID = l.devices.Track(ctx, user.ID, user.Email, meta, result.Method)
+	recordEvent(ctx, l.audit, audit.Event{
+		Actor: adminActor(user.ID, meta.IP), Action: audit.ActionLoginSucceeded,
+		Data: map[string]string{"method": auditMethod(result.Method)},
+	})
 	return result, nil
+}
+
+func auditMethod(m LoginMethod) string {
+	if m == MethodSetup {
+		return "totp_enrollment"
+	}
+	return string(m)
+}
+
+// firstRateLimited reports whether this is the first rejection of ip within rateLimitAuditTTL, so a
+// blocked client writes one audit event per block and not one per request.
+func (l *Login) firstRateLimited(ctx context.Context, ip string) bool {
+	key := l.challenges.prefix + ":audit-rl:" + ipOrUnknown(ip)
+	ok, err := l.challenges.rdb.SetNX(ctx, key, 1, rateLimitAuditTTL).Result()
+	if err != nil {
+		l.log.WarnContext(ctx, "dedupe rate limited audit event", "err", err)
+		return false
+	}
+	return ok
+}
+
+func (l *Login) auditFailure(ctx context.Context, ip, stage string, err error) {
+	var reason string
+	switch {
+	case errors.Is(err, ErrTooManyAttempts):
+		if !l.firstRateLimited(ctx, ip) {
+			l.log.WarnContext(ctx, "login rate limited")
+			return
+		}
+		reason = "rate_limited"
+	case errors.Is(err, ErrInvalidCredentials), errors.Is(err, ErrInvalidTOTP), errors.Is(err, ErrInvalidRecoveryCode):
+		reason = "invalid"
+	default:
+		return
+	}
+	recordEvent(ctx, l.audit, audit.Event{
+		Actor: anonymousActor(ip), Action: audit.ActionLoginFailed,
+		Data: map[string]string{"stage": stage, "reason": reason},
+	})
 }
 
 func (l *Login) loadChallenge(ctx context.Context, token string) (challenge, *adminUser, error) {
@@ -198,6 +254,14 @@ func challengeAAD(uid string) []byte { return []byte("challenge:" + uid) }
 func totpAAD(uid string) []byte { return []byte("admin_users.totp_secret:" + uid) }
 
 func (l *Login) Start(ctx context.Context, email, password, ip string) (LoginStart, error) {
+	start, err := l.start(ctx, email, password, ip)
+	if err != nil {
+		l.auditFailure(ctx, ip, auditStagePassword, err)
+	}
+	return start, err
+}
+
+func (l *Login) start(ctx context.Context, email, password, ip string) (LoginStart, error) {
 	if err := l.take(ctx, ipKey(ip)); err != nil {
 		return LoginStart{}, err
 	}
@@ -265,7 +329,8 @@ func (l *Login) BeginTOTPSetup(ctx context.Context, token string) (TOTPSetup, er
 // CompleteTOTPSetup enables TOTP and issues the session. When only the session
 // fails, it returns ErrSetupSessionNotIssued together with a result that still
 // holds the recovery codes, which the caller must show.
-func (l *Login) CompleteTOTPSetup(ctx context.Context, token, code string, meta ClientMeta) (LoginResult, error) {
+func (l *Login) CompleteTOTPSetup(ctx context.Context, token, code string, meta ClientMeta) (res LoginResult, err error) {
+	defer func() { l.auditFailure(ctx, meta.IP, auditStageTOTP, err) }()
 	ch, user, err := l.secondFactor(ctx, token, meta.IP)
 	if err != nil {
 		return LoginResult{}, err
@@ -312,10 +377,12 @@ func (l *Login) CompleteTOTPSetup(ctx context.Context, token, code string, meta 
 	if err != nil {
 		return LoginResult{}, err
 	}
+	recordEvent(ctx, l.audit, audit.Event{Actor: adminActor(user.ID, meta.IP), Action: audit.ActionTOTPEnrolled})
 	return l.finish(ctx, token, user, meta.IP, meta, LoginResult{Method: MethodSetup, RecoveryCodes: shown})
 }
 
-func (l *Login) VerifyTOTP(ctx context.Context, token, code string, meta ClientMeta) (LoginResult, error) {
+func (l *Login) VerifyTOTP(ctx context.Context, token, code string, meta ClientMeta) (res LoginResult, err error) {
+	defer func() { l.auditFailure(ctx, meta.IP, auditStageTOTP, err) }()
 	_, user, err := l.secondFactor(ctx, token, meta.IP)
 	if err != nil {
 		return LoginResult{}, err
@@ -342,7 +409,8 @@ func (l *Login) VerifyTOTP(ctx context.Context, token, code string, meta ClientM
 	return l.finish(ctx, token, user, meta.IP, meta, LoginResult{Method: MethodTOTP})
 }
 
-func (l *Login) VerifyRecoveryCode(ctx context.Context, token, code string, meta ClientMeta) (LoginResult, error) {
+func (l *Login) VerifyRecoveryCode(ctx context.Context, token, code string, meta ClientMeta) (res LoginResult, err error) {
+	defer func() { l.auditFailure(ctx, meta.IP, auditStageRecovery, err) }()
 	_, user, err := l.secondFactor(ctx, token, meta.IP)
 	if err != nil {
 		return LoginResult{}, err
@@ -361,5 +429,9 @@ func (l *Login) VerifyRecoveryCode(ctx context.Context, token, code string, meta
 	if err != nil {
 		return LoginResult{}, err
 	}
+	recordEvent(ctx, l.audit, audit.Event{
+		Actor: adminActor(user.ID, meta.IP), Action: audit.ActionRecoveryCodeUsed,
+		Data: map[string]string{"remaining": strconv.Itoa(left)},
+	})
 	return l.finish(ctx, token, user, meta.IP, meta, LoginResult{Method: MethodRecovery, RecoveryCodesLeft: left})
 }

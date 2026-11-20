@@ -5,13 +5,16 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
-	"github.com/TomasSorgetti/auto-factura-api/internal/emails/emailstest"
+	"github.com/TomasSorgetti/auto-factura-api/internal/emails"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/queue"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
 
@@ -76,32 +79,65 @@ func TestIsDeviceID(t *testing.T) {
 	}
 }
 
+type failingInserter struct{}
+
+func (failingInserter) InsertTx(context.Context, pgx.Tx, river.JobArgs, *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+	return nil, errors.New("boom")
+}
+
 type deviceEnv struct {
 	*sessionEnv
 	tracker *DeviceTracker
-	mail    *emailstest.Fake
 	now     time.Time
 }
 
 func newDeviceEnv(t *testing.T) *deviceEnv {
 	t.Helper()
 	se := newSessionEnv(t)
-	mail := &emailstest.Fake{}
-	e := &deviceEnv{sessionEnv: se, mail: mail, now: time.Now().UTC().Truncate(time.Second)}
+	client, err := queue.NewInsertOnly(se.pool, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &deviceEnv{sessionEnv: se, now: time.Now().UTC().Truncate(time.Second)}
+	e.tracker = e.newTracker(t, emails.NewOutbox(client))
+	return e
+}
+
+func (e *deviceEnv) newTracker(t *testing.T, outbox *emails.Outbox) *DeviceTracker {
+	t.Helper()
 	tracker, err := NewDeviceTracker(DeviceTrackerDeps{
-		Store: NewStore(se.pool), Sender: mail, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store: NewStore(e.pool), Outbox: outbox, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now: func() time.Time { return e.now }, Loc: time.UTC, BaseURL: "https://app.example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.tracker = tracker
-	return e
+	return tracker
 }
 
 func (e *deviceEnv) track(device string) string {
-	return e.tracker.Track(context.Background(), e.userID, "admin@example.com",
+	return e.trackWith(e.tracker, device)
+}
+
+func (e *deviceEnv) trackWith(tr *DeviceTracker, device string) string {
+	return tr.Track(context.Background(), e.userID, "admin@example.com",
 		ClientMeta{IP: "190.0.0.1", UserAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/126.0 Safari/537.36", DeviceID: device}, MethodTOTP)
+}
+
+func (e *deviceEnv) counts(t *testing.T) (deliveries, jobs, events int) {
+	t.Helper()
+	return count(t, e.pool, `SELECT count(*) FROM email_deliveries WHERE kind = 'device_alert' AND status = 'pending'`),
+		count(t, e.pool, `SELECT count(*) FROM river_job WHERE kind = 'email.send'`),
+		count(t, e.pool, `SELECT count(*) FROM audit_events WHERE action = 'auth.new_device'`)
+}
+
+func count(t *testing.T, pool *pgxpool.Pool, query string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(), query).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 const (
@@ -110,37 +146,41 @@ const (
 	deviceC = "33333333-3333-4333-8333-333333333333"
 )
 
-func TestDeviceTrackerTrack(t *testing.T) {
+func TestTrackNewDevice(t *testing.T) {
 	e := newDeviceEnv(t)
 
 	if got := e.track(deviceA); got != deviceA {
 		t.Fatalf("device id = %q", got)
 	}
-	if n := len(e.mail.Sent()); n != 0 {
-		t.Fatalf("first device sent %d mails", n)
+	if d, j, ev := e.counts(t); d != 0 || j != 0 || ev != 0 {
+		t.Fatalf("first device: deliveries=%d jobs=%d events=%d", d, j, ev)
 	}
 
 	e.now = e.now.Add(time.Hour)
 	e.track(deviceB)
-	sent := e.mail.Sent()
-	if len(sent) != 1 {
-		t.Fatalf("second device sent %d mails", len(sent))
+	if d, j, ev := e.counts(t); d != 1 || j != 1 || ev != 1 {
+		t.Fatalf("second device: deliveries=%d jobs=%d events=%d", d, j, ev)
 	}
-	if sent[0].Subject != newDeviceSubject || !strings.Contains(sent[0].Text, "190.0.0.1") ||
-		!strings.Contains(sent[0].HTML, "190.0.0.1") || len(sent[0].To) != 1 || sent[0].To[0] != "admin@example.com" {
-		t.Fatalf("unexpected message: %+v", sent[0])
+	if n := count(t, e.pool, `SELECT count(*) FROM admin_login_devices WHERE user_id = '`+e.userID+`' AND alerted_at IS NOT NULL`); n != 1 {
+		t.Fatalf("alerted devices = %d", n)
+	}
+	var device, ip string
+	err := e.pool.QueryRow(context.Background(),
+		`SELECT data->>'device', host(ip) FROM audit_events WHERE action = 'auth.new_device'`).Scan(&device, &ip)
+	if err != nil || device != "Chrome en Windows" || ip != "190.0.0.1" {
+		t.Fatalf("event device=%q ip=%q err=%v", device, ip, err)
 	}
 
 	e.now = e.now.Add(5 * time.Minute)
 	e.track(deviceC)
-	if n := len(e.mail.Sent()); n != 1 {
-		t.Fatalf("device inside cooldown sent mail, total %d", n)
+	if d, j, ev := e.counts(t); d != 1 || j != 1 || ev != 1 {
+		t.Fatalf("device inside cooldown: deliveries=%d jobs=%d events=%d", d, j, ev)
 	}
 
 	e.now = e.now.Add(time.Hour)
 	e.track(deviceB)
-	if n := len(e.mail.Sent()); n != 1 {
-		t.Fatalf("known device sent mail, total %d", n)
+	if d, _, _ := e.counts(t); d != 1 {
+		t.Fatalf("known device queued mail, total %d", d)
 	}
 
 	fresh := e.track("garbage")
@@ -149,24 +189,26 @@ func TestDeviceTrackerTrack(t *testing.T) {
 	}
 }
 
-func TestDeviceTrackerSenderFails(t *testing.T) {
+func TestTrackNewDeviceEnqueueFails(t *testing.T) {
 	e := newDeviceEnv(t)
 	e.track(deviceA)
-	e.mail.SetError(errors.New("boom"))
 	e.now = e.now.Add(time.Hour)
-	if got := e.track(deviceB); got != deviceB {
+	failing := e.newTracker(t, emails.NewOutbox(failingInserter{}))
+	if got := e.trackWith(failing, deviceB); got != deviceB {
 		t.Fatalf("device id = %q", got)
+	}
+	if d, j, ev := e.counts(t); d != 0 || j != 0 || ev != 0 {
+		t.Fatalf("rollback left deliveries=%d jobs=%d events=%d", d, j, ev)
 	}
 	var id string
 	err := e.pool.QueryRow(context.Background(),
 		`SELECT id::text FROM admin_login_devices WHERE user_id = $1 AND device_hash = $2`, e.userID, secrets.HashToken(deviceB)).Scan(&id)
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("failed device was kept: %v", err)
+		t.Fatalf("device was kept after rollback: %v", err)
 	}
-	e.mail.SetError(nil)
 	e.track(deviceB)
-	if n := len(e.mail.Sent()); n != 1 {
-		t.Fatalf("retry sent %d mails", n)
+	if d, j, ev := e.counts(t); d != 1 || j != 1 || ev != 1 {
+		t.Fatalf("retry: deliveries=%d jobs=%d events=%d", d, j, ev)
 	}
 }
 
@@ -180,7 +222,18 @@ func TestDeviceTrackerCanceledContext(t *testing.T) {
 	if got != deviceB {
 		t.Fatalf("device id = %q", got)
 	}
-	if n := len(e.mail.Sent()); n != 1 {
-		t.Fatalf("canceled context sent %d mails", n)
+	if d, _, _ := e.counts(t); d != 1 {
+		t.Fatalf("canceled context queued %d mails", d)
+	}
+}
+
+func TestTrackNewDeviceInvalidIP(t *testing.T) {
+	e := newDeviceEnv(t)
+	e.track(deviceA)
+	e.now = e.now.Add(time.Hour)
+	e.tracker.Track(context.Background(), e.userID, "admin@example.com",
+		ClientMeta{IP: "not-an-ip", DeviceID: deviceB}, MethodTOTP)
+	if d, j, ev := e.counts(t); d != 1 || j != 1 || ev != 1 {
+		t.Fatalf("invalid ip: deliveries=%d jobs=%d events=%d", d, j, ev)
 	}
 }

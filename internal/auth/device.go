@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
+	"github.com/TomasSorgetti/auto-factura-api/internal/audit"
 	"github.com/TomasSorgetti/auto-factura-api/internal/emails"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
@@ -16,7 +15,6 @@ import (
 const (
 	deviceAlertCooldown = 10 * time.Minute
 	DeviceCookieMaxAge  = 400 * 24 * time.Hour
-	deviceAlertTimeout  = 10 * time.Second
 	deviceTrackTimeout  = 20 * time.Second
 )
 
@@ -79,7 +77,7 @@ func describeUserAgent(ua string) string {
 
 type DeviceTrackerDeps struct {
 	Store   *Store
-	Sender  emails.Sender
+	Outbox  *emails.Outbox
 	Log     *slog.Logger
 	Now     func() time.Time
 	Loc     *time.Location
@@ -89,7 +87,7 @@ type DeviceTrackerDeps struct {
 // DeviceTracker records the device of each login and emails an alert for a new one.
 type DeviceTracker struct {
 	store   *Store
-	sender  emails.Sender
+	outbox  *emails.Outbox
 	log     *slog.Logger
 	now     func() time.Time
 	loc     *time.Location
@@ -97,14 +95,14 @@ type DeviceTracker struct {
 }
 
 func NewDeviceTracker(d DeviceTrackerDeps) (*DeviceTracker, error) {
-	if d.Store == nil || d.Sender == nil || d.Log == nil || d.Loc == nil {
-		return nil, errors.New("device tracker: store, sender, log and location are required")
+	if d.Store == nil || d.Outbox == nil || d.Log == nil || d.Loc == nil {
+		return nil, errors.New("device tracker: store, outbox, log and location are required")
 	}
 	now := d.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &DeviceTracker{store: d.Store, sender: d.Sender, log: d.Log, now: now, loc: d.Loc, baseURL: d.BaseURL}, nil
+	return &DeviceTracker{store: d.Store, outbox: d.Outbox, log: d.Log, now: now, loc: d.Loc, baseURL: d.BaseURL}, nil
 }
 
 // Track records the device and may email an alert. It never returns an error: failures are logged.
@@ -132,46 +130,47 @@ func (d *DeviceTracker) track(ctx context.Context, userID, email, deviceID strin
 	if err != nil {
 		return err
 	}
-	count, err := d.store.countLoginDevices(ctx, uid)
-	if err != nil {
-		return err
-	}
-	id, isNew, err := d.store.touchLoginDevice(ctx, uid, secrets.HashToken(deviceID), meta.UserAgent, meta.IP)
-	if err != nil {
-		return err
-	}
-	if !isNew || count == 0 {
-		return nil
-	}
-	last, err := d.store.lastLoginDeviceAlertAt(ctx, uid)
-	if err != nil {
-		return err
-	}
-	now := d.now()
-	if !shouldAlertNewDevice(isNew, count > 0, last, now) {
-		return nil
-	}
-	msg, err := newDeviceMessage(email, alertData{
-		When:     now.In(d.loc),
-		Device:   describeUserAgent(meta.UserAgent),
-		IP:       meta.IP,
-		Method:   method,
-		LoginURL: strings.TrimRight(d.baseURL, "/") + "/login",
+	return d.store.InTx(ctx, func(st *Store) error {
+		count, err := st.countLoginDevices(ctx, uid)
+		if err != nil {
+			return err
+		}
+		id, isNew, err := st.touchLoginDevice(ctx, uid, secrets.HashToken(deviceID), meta.UserAgent, meta.IP)
+		if err != nil {
+			return err
+		}
+		if !isNew || count == 0 {
+			return nil
+		}
+		last, err := st.lastLoginDeviceAlertAt(ctx, uid)
+		if err != nil {
+			return err
+		}
+		now := d.now()
+		if !shouldAlertNewDevice(isNew, count > 0, last, now) {
+			return nil
+		}
+		device := describeUserAgent(meta.UserAgent)
+		msg, err := newDeviceMessage(email, alertData{
+			When:     now.In(d.loc),
+			Device:   device,
+			IP:       meta.IP,
+			Method:   method,
+			LoginURL: strings.TrimRight(d.baseURL, "/") + "/login",
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := d.outbox.Enqueue(ctx, st.txn(), msg); err != nil {
+			return err
+		}
+		if err := st.markLoginDeviceAlerted(ctx, id, now); err != nil {
+			return err
+		}
+		return audit.Record(ctx, st.txn(), audit.Event{
+			Actor:  adminActor(userID, meta.IP),
+			Action: audit.ActionNewDevice,
+			Data:   map[string]string{"device": device},
+		})
 	})
-	if err != nil {
-		return errors.Join(err, d.forget(ctx, id))
-	}
-	sendCtx, cancel := context.WithTimeout(ctx, deviceAlertTimeout)
-	defer cancel()
-	if _, err := d.sender.Send(sendCtx, msg); err != nil {
-		return errors.Join(err, d.forget(ctx, id))
-	}
-	return d.store.markLoginDeviceAlerted(ctx, id, now)
-}
-
-// forget removes a device whose alert was not sent, so the next login sees it as new again.
-func (d *DeviceTracker) forget(ctx context.Context, id pgtype.UUID) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deviceTrackTimeout)
-	defer cancel()
-	return d.store.deleteUnalertedLoginDevice(ctx, id)
 }

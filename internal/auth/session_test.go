@@ -50,7 +50,7 @@ func newSessionEnv(t *testing.T) *sessionEnv {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return &sessionEnv{pool: pool, sessions: NewSessions(NewStore(pool), tk, log), clock: clock, userID: userID}
+	return &sessionEnv{pool: pool, sessions: NewSessions(NewStore(pool), tk, log, newTestAuditor(pool)), clock: clock, userID: userID}
 }
 
 type tokenRow struct {
@@ -233,15 +233,18 @@ func TestSessionsLogout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.sessions.Logout(ctx, s.RefreshToken.Reveal()); err != nil {
+	if err := e.sessions.Logout(ctx, s.RefreshToken.Reveal(), ClientMeta{IP: "2.2.2.2"}); err != nil {
 		t.Fatal(err)
 	}
 	rows := e.rows(t)
 	if len(rows) != 1 || !rows[0].revoked {
 		t.Fatalf("rows: %+v", rows)
 	}
-	if err := e.sessions.Logout(ctx, "garbage"); err != nil {
+	if err := e.sessions.Logout(ctx, "garbage", ClientMeta{}); err != nil {
 		t.Fatalf("garbage: %v", err)
+	}
+	if ev := auditEvents(t, e.pool, "auth.logout"); len(ev) != 1 || ev[0].actorType != "admin" || ev[0].ip != "2.2.2.2" {
+		t.Fatalf("logout events = %+v", ev)
 	}
 	if _, err := e.sessions.Refresh(ctx, s.RefreshToken.Reveal(), ClientMeta{}); !errors.Is(err, ErrSessionInvalid) {
 		t.Fatalf("refresh after logout: %v", err)
@@ -259,7 +262,7 @@ func TestSessionsLogoutThenGraceRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.sessions.Logout(ctx, second.RefreshToken.Reveal()); err != nil {
+	if err := e.sessions.Logout(ctx, second.RefreshToken.Reveal(), ClientMeta{}); err != nil {
 		t.Fatal(err)
 	}
 	e.clock.Advance(time.Minute)

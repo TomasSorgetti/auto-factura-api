@@ -20,7 +20,7 @@ type workerDeps struct {
 
 func newWorkers(d workerDeps) (*river.Workers, []*river.PeriodicJob, error) {
 	workers := river.NewWorkers()
-	accounts := auth.NewAccounts(d.pool, d.hasher)
+	accounts := auth.NewAccounts(d.pool, d.hasher, nil)
 	if err := river.AddWorkerSafely(workers, &auth.PruneTokensWorker{Accounts: accounts, Log: d.log}); err != nil {
 		return nil, nil, err
 	}

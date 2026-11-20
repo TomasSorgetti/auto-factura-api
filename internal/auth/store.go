@@ -19,6 +19,7 @@ import (
 type Store struct {
 	pool *pgxpool.Pool
 	q    *sqlc.Queries
+	tx   pgx.Tx
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
@@ -28,9 +29,12 @@ func NewStore(pool *pgxpool.Pool) *Store {
 // InTx runs fn with a Store bound to a single transaction.
 func (s *Store) InTx(ctx context.Context, fn func(*Store) error) error {
 	return postgres.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		return fn(&Store{pool: s.pool, q: s.q.WithTx(tx)})
+		return fn(&Store{pool: s.pool, q: s.q.WithTx(tx), tx: tx})
 	})
 }
+
+// txn returns the transaction of a Store created by InTx; it is nil outside one.
+func (s *Store) txn() pgx.Tx { return s.tx }
 
 func parseUUID(s string) (pgtype.UUID, error) {
 	var u pgtype.UUID

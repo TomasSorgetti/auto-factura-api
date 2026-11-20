@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/audit"
 	"github.com/TomasSorgetti/auto-factura-api/internal/db/sqlc"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
 )
@@ -27,11 +28,13 @@ const (
 type Accounts struct {
 	store  *Store
 	hasher *secrets.PasswordHasher
+	audit  Auditor
 	now    func() time.Time
 }
 
-func NewAccounts(pool *pgxpool.Pool, hasher *secrets.PasswordHasher) *Accounts {
-	return &Accounts{store: NewStore(pool), hasher: hasher, now: time.Now}
+// NewAccounts builds the account operations; audit may be nil when no event must be recorded.
+func NewAccounts(pool *pgxpool.Pool, hasher *secrets.PasswordHasher, audit Auditor) *Accounts {
+	return &Accounts{store: NewStore(pool), hasher: hasher, audit: audit, now: time.Now}
 }
 
 // CreateUser creates the single admin user and returns its ID. It returns
@@ -62,7 +65,12 @@ func (a *Accounts) CreateUser(ctx context.Context, email, password string) (stri
 	if err != nil {
 		return "", fmt.Errorf("create admin user: %w", err)
 	}
+	a.record(ctx, audit.ActionUserCreated)
 	return u.ID.String(), nil
+}
+
+func (a *Accounts) record(ctx context.Context, action audit.Action) {
+	recordEvent(ctx, a.audit, audit.Event{Actor: cliActor, Action: action})
 }
 
 // ResetPassword replaces the password and revokes every session.
@@ -74,7 +82,7 @@ func (a *Accounts) ResetPassword(ctx context.Context, password string) error {
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	return a.onAdmin(ctx, func(st *Store, id string) error {
+	err = a.onAdmin(ctx, func(st *Store, id string) error {
 		u, err := parseUUID(id)
 		if err != nil {
 			return err
@@ -84,12 +92,17 @@ func (a *Accounts) ResetPassword(ctx context.Context, password string) error {
 		}
 		return st.revokeAll(ctx, id, a.now())
 	})
+	if err != nil {
+		return err
+	}
+	a.record(ctx, audit.ActionPasswordReset)
+	return nil
 }
 
 // ResetTOTP clears the TOTP secret and recovery codes and revokes every
 // session; the next login enrolls again.
 func (a *Accounts) ResetTOTP(ctx context.Context) error {
-	return a.onAdmin(ctx, func(st *Store, id string) error {
+	err := a.onAdmin(ctx, func(st *Store, id string) error {
 		u, err := parseUUID(id)
 		if err != nil {
 			return err
@@ -102,12 +115,22 @@ func (a *Accounts) ResetTOTP(ctx context.Context) error {
 		}
 		return st.revokeAll(ctx, id, a.now())
 	})
+	if err != nil {
+		return err
+	}
+	a.record(ctx, audit.ActionTOTPReset)
+	return nil
 }
 
 func (a *Accounts) RevokeSessions(ctx context.Context) error {
-	return a.onAdmin(ctx, func(st *Store, id string) error {
+	err := a.onAdmin(ctx, func(st *Store, id string) error {
 		return st.revokeAll(ctx, id, a.now())
 	})
+	if err != nil {
+		return err
+	}
+	a.record(ctx, audit.ActionSessionsRevoked)
+	return nil
 }
 
 // PruneExpiredTokens deletes refresh tokens past their expiry and returns how many.

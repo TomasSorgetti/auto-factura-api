@@ -37,7 +37,7 @@ func mapEnv(m map[string]string) func(string) string {
 func TestLoadAuth(t *testing.T) {
 	t.Parallel()
 
-	prod := map[string]string{"APP_ENV": "production", "RESEND_API_KEY": "re_x", "EMAIL_FROM": "Auto <a@example.com>", "PUBLIC_BASE_URL": "https://app.example.com"}
+	prod := map[string]string{"APP_ENV": "production", "PUBLIC_BASE_URL": "https://app.example.com"}
 	with := func(base map[string]string, kv ...string) map[string]string {
 		m := maps.Clone(base)
 		for i := 0; i < len(kv); i += 2 {
@@ -67,9 +67,6 @@ func TestLoadAuth(t *testing.T) {
 		{name: "argon2 memory low", env: with(dev, "ARGON2_MEMORY_KIB", "100"), wantErr: "ARGON2_MEMORY_KIB"},
 		{name: "argon2 time high", env: with(dev, "ARGON2_TIME", "11"), wantErr: "ARGON2_TIME"},
 		{name: "argon2 threads zero", env: with(dev, "ARGON2_THREADS", "0"), wantErr: "ARGON2_THREADS"},
-		{name: "production without resend", env: with(prod, "RESEND_API_KEY", ""), wantErr: "RESEND_API_KEY"},
-		{name: "email from invalid", env: with(prod, "EMAIL_FROM", "nope"), wantErr: "EMAIL_FROM"},
-		{name: "email from missing", env: with(prod, "EMAIL_FROM", ""), wantErr: "EMAIL_FROM"},
 		{name: "base url with path", env: with(dev, "PUBLIC_BASE_URL", "http://localhost:5173/x"), wantErr: "PUBLIC_BASE_URL"},
 		{name: "base url http in production", env: with(prod, "PUBLIC_BASE_URL", "http://app.example.com"), wantErr: "PUBLIC_BASE_URL"},
 		{name: "invalid tz", env: with(dev, "BUSINESS_TZ", "Mars/Olympus"), wantErr: "BUSINESS_TZ"},
@@ -217,7 +214,7 @@ func TestLoadCORSAllowedOrigins(t *testing.T) {
 			t.Parallel()
 			cfg, err := Load(mapEnv(map[string]string{
 				"APP_ENV": tt.env, "CORS_ALLOWED_ORIGINS": tt.value,
-				"RESEND_API_KEY": "re_x", "EMAIL_FROM": "a@example.com", "PUBLIC_BASE_URL": "https://app.example.com",
+				"PUBLIC_BASE_URL": "https://app.example.com",
 			}))
 			if tt.wantErr {
 				if err == nil || !strings.Contains(err.Error(), "CORS_ALLOWED_ORIGINS") {

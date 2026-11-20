@@ -22,7 +22,7 @@ func newAccounts(t *testing.T) (*Accounts, *pgxpool.Pool, *secrets.PasswordHashe
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewAccounts(pool, hasher), pool, hasher
+	return NewAccounts(pool, hasher, newTestAuditor(pool)), pool, hasher
 }
 
 func TestAccountsCreateUser(t *testing.T) {
@@ -162,5 +162,29 @@ func TestAccountsRevokeAndPrune(t *testing.T) {
 	n, err := a.PruneExpiredTokens(ctx)
 	if err != nil || n != 1 {
 		t.Fatalf("pruned = %d err=%v", n, err)
+	}
+}
+
+func TestAccountsAudit(t *testing.T) {
+	t.Parallel()
+	a, pool, _ := newAccounts(t)
+	ctx := context.Background()
+	if _, err := a.CreateUser(ctx, "vos@ejemplo.com", "una-contraseña-larga"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ResetPassword(ctx, "otra-contraseña-larga"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ResetTOTP(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RevokeSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"auth.user_created", "auth.password_reset", "auth.totp_reset", "auth.sessions_revoked"} {
+		rows := auditEvents(t, pool, action)
+		if len(rows) != 1 || rows[0].actorType != "cli" {
+			t.Fatalf("%s rows = %+v", action, rows)
+		}
 	}
 }
