@@ -84,3 +84,18 @@ type EmailDelivery struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 }
+
+type Setting struct {
+	ID                  bool
+	Cuit                string
+	LegalName           string
+	Address             string
+	GrossIncomeNumber   string
+	ActivityStartDate   pgtype.Date
+	PointOfSale         int32
+	MonotributoCategory string
+	AnnualCapCents      int64
+	ArcaEnv             string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}

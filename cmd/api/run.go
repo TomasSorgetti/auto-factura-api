@@ -17,6 +17,7 @@ import (
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/queue"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/redisx"
+	"github.com/TomasSorgetti/auto-factura-api/internal/settings"
 )
 
 func run(ctx context.Context, getenv func(string) string, stdout io.Writer) error {
@@ -78,7 +79,8 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
-	rt, err := newRouter(routerDeps{log: log, errors: errs, checks: checks, auth: authHandler, requireAdmin: requireAdmin})
+	rt, err := newRouter(routerDeps{log: log, errors: errs, checks: checks, auth: authHandler,
+		settings: settings.NewHandler(settings.NewService(pool, cfg.BusinessLocation)), requireAdmin: requireAdmin})
 	if err != nil {
 		return err
 	}

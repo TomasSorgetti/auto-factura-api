@@ -15,6 +15,7 @@ import (
 	"github.com/TomasSorgetti/auto-factura-api/internal/auth"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
+	"github.com/TomasSorgetti/auto-factura-api/internal/settings"
 )
 
 const zeroUUID = "00000000-0000-0000-0000-000000000000"
@@ -29,6 +30,7 @@ func testRouterDeps(log *slog.Logger, errs *httpx.ErrorMapper) routerDeps {
 	return routerDeps{
 		log: log, errors: errs,
 		auth:         &auth.Handler{},
+		settings:     settings.NewHandler(nil),
 		requireAdmin: auth.RequireAdmin(denyAuthenticator{}, errs),
 	}
 }
@@ -84,6 +86,8 @@ func TestAdminRoutesRequireSession(t *testing.T) {
 		{Method: "POST", Path: "/api/auth/refresh", Surface: httpx.SurfaceSystem},
 		{Method: "POST", Path: "/api/auth/logout", Surface: httpx.SurfaceSystem},
 		{Method: "GET", Path: "/api/admin/me", Surface: httpx.SurfaceAdmin},
+		{Method: "GET", Path: "/api/admin/settings", Surface: httpx.SurfaceAdmin},
+		{Method: "PUT", Path: "/api/admin/settings", Surface: httpx.SurfaceAdmin},
 	} {
 		if !slices.Contains(routes, want) {
 			t.Errorf("route %+v is not registered", want)
