@@ -79,8 +79,8 @@ func (q *Queries) CreateAdminUser(ctx context.Context, arg CreateAdminUserParams
 }
 
 const createRefreshToken = `-- name: CreateRefreshToken :one
-INSERT INTO admin_refresh_tokens (user_id, jti, token_hash, ip, user_agent, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+INSERT INTO admin_refresh_tokens (user_id, jti, token_hash, ip, user_agent, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
 type CreateRefreshTokenParams struct {
@@ -90,6 +90,7 @@ type CreateRefreshTokenParams struct {
 	Ip        string
 	UserAgent string
 	ExpiresAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
 }
 
 func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshTokenParams) (pgtype.UUID, error) {
@@ -100,6 +101,7 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 		arg.Ip,
 		arg.UserAgent,
 		arg.ExpiresAt,
+		arg.CreatedAt,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -295,6 +297,17 @@ func (q *Queries) LastLoginDeviceAlertAt(ctx context.Context, userID pgtype.UUID
 	var column_1 pgtype.Timestamptz
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const lockAdminSessionState = `-- name: LockAdminSessionState :one
+SELECT sessions_revoked_at FROM admin_users WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockAdminSessionState(ctx context.Context, id pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lockAdminSessionState, id)
+	var sessions_revoked_at pgtype.Timestamptz
+	err := row.Scan(&sessions_revoked_at)
+	return sessions_revoked_at, err
 }
 
 const markLoginDeviceAlerted = `-- name: MarkLoginDeviceAlerted :exec

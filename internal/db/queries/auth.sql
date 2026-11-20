@@ -13,6 +13,9 @@ SELECT * FROM admin_users WHERE email = $1;
 -- name: GetAdminSessionState :one
 SELECT id, sessions_revoked_at FROM admin_users WHERE id = $1;
 
+-- name: LockAdminSessionState :one
+SELECT sessions_revoked_at FROM admin_users WHERE id = $1 FOR UPDATE;
+
 -- name: SetAdminPassword :exec
 UPDATE admin_users SET password_hash = $2, password_changed_at = now() WHERE id = $1;
 
@@ -31,8 +34,8 @@ UPDATE admin_users SET totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last
 UPDATE admin_users SET sessions_revoked_at = $2 WHERE id = $1;
 
 -- name: CreateRefreshToken :one
-INSERT INTO admin_refresh_tokens (user_id, jti, token_hash, ip, user_agent, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;
+INSERT INTO admin_refresh_tokens (user_id, jti, token_hash, ip, user_agent, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;
 
 -- name: GetRefreshTokenByJTIForUpdate :one
 SELECT * FROM admin_refresh_tokens WHERE jti = $1 FOR UPDATE;
