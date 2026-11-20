@@ -280,3 +280,27 @@ func TestLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadWorker(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadWorker(mapEnv(map[string]string{"APP_ENV": "development"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DBMaxConns != 10 || cfg.ShutdownTimeout != 25*time.Second || cfg.DBStatementTimeout != 5*time.Second ||
+		cfg.LogFormat != "json" || cfg.LogLevel != slog.LevelInfo {
+		t.Fatalf("unexpected defaults: %+v", cfg)
+	}
+
+	for _, tc := range []struct{ key, value string }{
+		{"WORKER_DB_MAX_CONNS", "7"},
+		{"WORKER_DB_MAX_CONNS", "31"},
+		{"WORKER_SHUTDOWN_TIMEOUT", "61s"},
+	} {
+		_, err := LoadWorker(mapEnv(map[string]string{"APP_ENV": "development", tc.key: tc.value}))
+		if err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Fatalf("%s=%s: err = %v", tc.key, tc.value, err)
+		}
+	}
+}

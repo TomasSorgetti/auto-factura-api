@@ -15,6 +15,7 @@ import (
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/queue"
 )
 
 // New returns a pool over a fresh, fully migrated database that is dropped
@@ -118,6 +119,9 @@ func create(t *testing.T, migrate bool) (*pgxpool.Pool, string) {
 		}()
 		if _, err := m.Up(ctx); err != nil {
 			t.Fatalf("migrate test database: %v", err)
+		}
+		if err := queue.Migrate(ctx, pool); err != nil {
+			t.Fatalf("migrate river: %v", err)
 		}
 	}
 	return pool, dbURL

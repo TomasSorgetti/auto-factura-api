@@ -10,6 +10,13 @@ import (
 
 type ctxKey struct{}
 
+type jobKey struct{}
+
+type jobInfo struct {
+	id   int64
+	kind string
+}
+
 // WithRequestID returns a context that makes loggers add request_id.
 func WithRequestID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, ctxKey{}, id)
@@ -19,6 +26,11 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 func RequestID(ctx context.Context) string {
 	id, _ := ctx.Value(ctxKey{}).(string)
 	return id
+}
+
+// WithJob returns a context that makes loggers add job_id and job_kind.
+func WithJob(ctx context.Context, id int64, kind string) context.Context {
+	return context.WithValue(ctx, jobKey{}, jobInfo{id: id, kind: kind})
 }
 
 // New returns a JSON logger, or a text logger when format is "text".
@@ -44,6 +56,9 @@ func (h contextHandler) Enabled(ctx context.Context, l slog.Level) bool {
 func (h contextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := RequestID(ctx); id != "" {
 		r.AddAttrs(slog.String("request_id", id))
+	}
+	if j, ok := ctx.Value(jobKey{}).(jobInfo); ok {
+		r.AddAttrs(slog.Int64("job_id", j.id), slog.String("job_kind", j.kind))
 	}
 	return h.inner.Handle(ctx, r)
 }

@@ -106,6 +106,64 @@ func LoadAdmin(getenv func(string) string) (AdminConfig, error) {
 	return AdminConfig{Env: env, DatabaseURL: dbURL, Argon2: argon2}, nil
 }
 
+// WorkerConfig is the subset of the configuration that cmd/worker needs.
+type WorkerConfig struct {
+	Env                Env
+	LogLevel           slog.Level
+	LogFormat          string
+	DatabaseURL        logx.Secret
+	DBMaxConns         int32
+	DBStatementTimeout time.Duration
+	ShutdownTimeout    time.Duration
+	Argon2             secrets.Argon2Params
+}
+
+// LoadWorker reads the worker variables through getenv and reports every invalid one at once.
+func LoadWorker(getenv func(string) string) (WorkerConfig, error) {
+	var errs []error
+	cfg := WorkerConfig{DBMaxConns: 10}
+
+	if env, err := parseEnv(getenv); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.Env = env
+	}
+	if dbURL, err := parseDatabaseURL(getenv); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.DatabaseURL = dbURL
+	}
+	if v := getenv("WORKER_DB_MAX_CONNS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 8 || n > 30 {
+			errs = append(errs, errors.New("WORKER_DB_MAX_CONNS: must be an integer between 8 and 30"))
+		} else {
+			cfg.DBMaxConns = int32(n)
+		}
+	}
+	if d, err := parseStatementTimeout(getenv); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.DBStatementTimeout = d
+	}
+	if d, err := duration(getenv, "WORKER_SHUTDOWN_TIMEOUT", 25*time.Second, time.Minute); err != nil {
+		errs = append(errs, err)
+	} else {
+		cfg.ShutdownTimeout = d
+	}
+	level, format, logErrs := parseLog(getenv, cfg.Env == EnvProduction)
+	cfg.LogLevel, cfg.LogFormat = level, format
+	errs = append(errs, logErrs...)
+	argon2, argonErrs := loadArgon2(getenv)
+	cfg.Argon2 = argon2
+	errs = append(errs, argonErrs...)
+
+	if len(errs) > 0 {
+		return WorkerConfig{}, errors.Join(errs...)
+	}
+	return cfg, nil
+}
+
 func parseEnv(getenv func(string) string) (Env, error) {
 	switch env := Env(getenv("APP_ENV")); env {
 	case EnvDevelopment, EnvTest, EnvProduction:
@@ -143,14 +201,11 @@ func Load(getenv func(string) string) (Config, error) {
 	var errs []error
 	cfg := Config{
 		HTTPAddr:        ":8080",
-		LogLevel:        slog.LevelInfo,
-		LogFormat:       "json",
 		RequestTimeout:  15 * time.Second,
 		ShutdownTimeout: 10 * time.Second,
 	}
 
 	cfg.DBMaxConns = 5
-	cfg.DBStatementTimeout = 5 * time.Second
 
 	if env, err := parseEnv(getenv); err != nil {
 		errs = append(errs, err)
@@ -179,7 +234,7 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 
-	if d, err := durationBetween(getenv, "DB_STATEMENT_TIMEOUT", cfg.DBStatementTimeout, time.Second, time.Minute); err != nil {
+	if d, err := parseStatementTimeout(getenv); err != nil {
 		errs = append(errs, err)
 	} else {
 		cfg.DBStatementTimeout = d
@@ -189,23 +244,9 @@ func Load(getenv func(string) string) (Config, error) {
 		cfg.HTTPAddr = v
 	}
 
-	if v := getenv("LOG_LEVEL"); v != "" {
-		if err := cfg.LogLevel.UnmarshalText([]byte(v)); err != nil {
-			errs = append(errs, errors.New("LOG_LEVEL: must be one of debug, info, warn, error"))
-		}
-	}
-
-	if v := getenv("LOG_FORMAT"); v != "" {
-		switch v {
-		case "json", "text":
-			cfg.LogFormat = v
-		default:
-			errs = append(errs, errors.New("LOG_FORMAT: must be one of json, text"))
-		}
-	}
-	if cfg.IsProduction() && cfg.LogFormat != "json" {
-		errs = append(errs, errors.New("LOG_FORMAT: must be json in production"))
-	}
+	logLevel, logFormat, logErrs := parseLog(getenv, cfg.IsProduction())
+	cfg.LogLevel, cfg.LogFormat = logLevel, logFormat
+	errs = append(errs, logErrs...)
 
 	if d, err := duration(getenv, "REQUEST_TIMEOUT", cfg.RequestTimeout, time.Minute); err != nil {
 		errs = append(errs, err)
@@ -233,6 +274,32 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+func parseLog(getenv func(string) string, production bool) (slog.Level, string, []error) {
+	var errs []error
+	level, format := slog.LevelInfo, "json"
+	if v := getenv("LOG_LEVEL"); v != "" {
+		if err := level.UnmarshalText([]byte(v)); err != nil {
+			errs = append(errs, errors.New("LOG_LEVEL: must be one of debug, info, warn, error"))
+		}
+	}
+	if v := getenv("LOG_FORMAT"); v != "" {
+		switch v {
+		case "json", "text":
+			format = v
+		default:
+			errs = append(errs, errors.New("LOG_FORMAT: must be one of json, text"))
+		}
+	}
+	if production && format != "json" {
+		errs = append(errs, errors.New("LOG_FORMAT: must be json in production"))
+	}
+	return level, format, errs
+}
+
+func parseStatementTimeout(getenv func(string) string) (time.Duration, error) {
+	return durationBetween(getenv, "DB_STATEMENT_TIMEOUT", 5*time.Second, time.Second, time.Minute)
 }
 
 func loadAuth(getenv func(string) string, cfg *Config) []error {

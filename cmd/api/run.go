@@ -15,6 +15,7 @@ import (
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/queue"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/redisx"
 )
 
@@ -38,6 +39,9 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 
 	sctx, scancel := context.WithTimeout(ctx, 10*time.Second)
 	err = postgres.CheckSchema(sctx, pool)
+	if err == nil {
+		err = queue.CheckSchema(sctx, pool)
+	}
 	scancel()
 	if err != nil {
 		return err

@@ -40,3 +40,20 @@ func TestRequestIDAttr(t *testing.T) {
 		})
 	}
 }
+
+func TestLogxWithJob(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	log := New(&buf, slog.LevelInfo, "json")
+	log.InfoContext(WithJob(context.Background(), 42, "auth.prune_tokens"), "hello")
+	out := buf.String()
+	if !strings.Contains(out, `"job_id":42`) || !strings.Contains(out, `"job_kind":"auth.prune_tokens"`) {
+		t.Fatalf("job attrs missing: %s", out)
+	}
+	buf.Reset()
+	log.InfoContext(context.Background(), "hello")
+	if strings.Contains(buf.String(), "job_id") {
+		t.Fatalf("unexpected job attrs: %s", buf.String())
+	}
+}

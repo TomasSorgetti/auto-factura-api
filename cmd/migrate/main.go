@@ -17,6 +17,7 @@ import (
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/queue"
 )
 
 func main() {
@@ -38,14 +39,14 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	fs.SetOutput(io.Discard)
 	allowDown := fs.Bool("allow-down", false, "allow reverting a migration outside production")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("usage: migrate [--allow-down] up|down|status: %w", err)
+		return fmt.Errorf("usage: migrate [--allow-down] up|down|status (down reverts only the last goose migration, never River): %w", err)
 	}
 	if fs.NArg() == 0 {
-		return errors.New("usage: migrate [--allow-down] up|down|status")
+		return errors.New("usage: migrate [--allow-down] up|down|status (down reverts only the last goose migration, never River)")
 	}
 	cmd := fs.Arg(0)
 	if err := fs.Parse(fs.Args()[1:]); err != nil || fs.NArg() != 0 {
-		return errors.New("usage: migrate [--allow-down] up|down|status")
+		return errors.New("usage: migrate [--allow-down] up|down|status (down reverts only the last goose migration, never River)")
 	}
 	switch cmd {
 	case "up", "down", "status":
@@ -95,6 +96,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 		for _, r := range results {
 			log.Info("migration applied", "version", r.Source.Version, "source", r.Source.Path, "duration", r.Duration)
 		}
+		if err := queue.Migrate(ctx, pool); err != nil {
+			return err
+		}
+		log.Info("river migrations applied")
 	case "down":
 		r, err := m.Down(ctx)
 		if err != nil {
@@ -113,6 +118,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 			}
 			log.Info("migration", "version", s.Source.Version, "applied_at", "pending")
 		}
+		v, err := queue.Version(ctx, pool)
+		if err != nil {
+			return err
+		}
+		log.Info("river", "version", v)
 	}
 	return nil
 }
