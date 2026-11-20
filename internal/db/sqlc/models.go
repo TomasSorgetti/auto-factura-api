@@ -3,3 +3,52 @@
 //   sqlc v1.31.1
 
 package sqlc
+
+import (
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+type AdminLoginDevice struct {
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	DeviceHash  []byte
+	UserAgent   string
+	LastIp      string
+	FirstSeenAt pgtype.Timestamptz
+	LastSeenAt  pgtype.Timestamptz
+	AlertedAt   pgtype.Timestamptz
+}
+
+type AdminRecoveryCode struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	CodeHash  []byte
+	UsedAt    pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+}
+
+type AdminRefreshToken struct {
+	ID           pgtype.UUID
+	UserID       pgtype.UUID
+	Jti          pgtype.UUID
+	TokenHash    []byte
+	Ip           string
+	UserAgent    string
+	ExpiresAt    pgtype.Timestamptz
+	RevokedAt    pgtype.Timestamptz
+	ReplacedByID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
+type AdminUser struct {
+	ID                pgtype.UUID
+	Email             string
+	PasswordHash      string
+	TotpSecretEnc     []byte
+	TotpEnabledAt     pgtype.Timestamptz
+	TotpLastStep      *int64
+	SessionsRevokedAt pgtype.Timestamptz
+	PasswordChangedAt pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
