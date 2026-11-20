@@ -5,6 +5,8 @@
 package sqlc
 
 import (
+	"net/netip"
+
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -51,4 +53,17 @@ type AdminUser struct {
 	PasswordChangedAt pgtype.Timestamptz
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
+}
+
+type AuditEvent struct {
+	ID         pgtype.UUID
+	OccurredAt pgtype.Timestamptz
+	ActorType  string
+	ActorID    pgtype.UUID
+	Action     string
+	EntityType *string
+	EntityID   *string
+	Ip         *netip.Addr
+	RequestID  *string
+	Data       []byte
 }
