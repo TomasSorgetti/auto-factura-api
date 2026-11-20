@@ -8,8 +8,77 @@ import (
 	"time"
 )
 
+const testDatabaseURL = "postgres://user:s3cret@localhost:5432/db?sslmode=disable"
+
 func mapEnv(m map[string]string) func(string) string {
-	return func(k string) string { return m[k] }
+	return func(k string) string {
+		if k == "DATABASE_URL" {
+			if v, ok := m[k]; ok {
+				return v
+			}
+			return testDatabaseURL
+		}
+		return m[k]
+	}
+}
+
+func TestLoadDatabase(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		wantErr string
+		conns   int32
+		timeout time.Duration
+	}{
+		{name: "defaults", env: map[string]string{"APP_ENV": "test"}, conns: 5, timeout: 5 * time.Second},
+		{name: "custom", env: map[string]string{"APP_ENV": "test", "DB_MAX_CONNS": "10", "DB_STATEMENT_TIMEOUT": "30s"}, conns: 10, timeout: 30 * time.Second},
+		{name: "missing url", env: map[string]string{"APP_ENV": "test", "DATABASE_URL": ""}, wantErr: "DATABASE_URL"},
+		{name: "invalid url", env: map[string]string{"APP_ENV": "test", "DATABASE_URL": "postgres://user:s3cret@host:notaport/db"}, wantErr: "DATABASE_URL"},
+		{name: "conns zero", env: map[string]string{"APP_ENV": "test", "DB_MAX_CONNS": "0"}, wantErr: "DB_MAX_CONNS"},
+		{name: "conns too many", env: map[string]string{"APP_ENV": "test", "DB_MAX_CONNS": "21"}, wantErr: "DB_MAX_CONNS"},
+		{name: "conns not a number", env: map[string]string{"APP_ENV": "test", "DB_MAX_CONNS": "x"}, wantErr: "DB_MAX_CONNS"},
+		{name: "timeout too short", env: map[string]string{"APP_ENV": "test", "DB_STATEMENT_TIMEOUT": "500ms"}, wantErr: "DB_STATEMENT_TIMEOUT"},
+		{name: "timeout too long", env: map[string]string{"APP_ENV": "test", "DB_STATEMENT_TIMEOUT": "2m"}, wantErr: "DB_STATEMENT_TIMEOUT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := Load(mapEnv(tt.env))
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected %s error, got %v", tt.wantErr, err)
+				}
+				if strings.Contains(err.Error(), "s3cret") {
+					t.Fatalf("error leaks the password: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.DBMaxConns != tt.conns || cfg.DBStatementTimeout != tt.timeout {
+				t.Fatalf("got %d, %s", cfg.DBMaxConns, cfg.DBStatementTimeout)
+			}
+		})
+	}
+}
+
+func TestLoadMigrate(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadMigrate(mapEnv(map[string]string{"APP_ENV": "production"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Env != EnvProduction || cfg.DatabaseURL.Reveal() != testDatabaseURL {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	_, err = LoadMigrate(mapEnv(map[string]string{"DATABASE_URL": ""}))
+	if err == nil || !strings.Contains(err.Error(), "APP_ENV") || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("expected both errors, got %v", err)
+	}
 }
 
 func TestLoadCORSAllowedOrigins(t *testing.T) {

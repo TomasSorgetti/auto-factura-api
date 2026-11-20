@@ -1,6 +1,10 @@
 package logx
 
-import "log/slog"
+import (
+	"encoding/json"
+	"log/slog"
+	"strconv"
+)
 
 const redacted = "[REDACTED]"
 
@@ -11,5 +15,9 @@ type Secret string
 func (Secret) LogValue() slog.Value { return slog.StringValue(redacted) }
 
 func (Secret) String() string { return redacted }
+
+func (Secret) GoString() string { return strconv.Quote(redacted) }
+
+func (Secret) MarshalJSON() ([]byte, error) { return json.Marshal(redacted) }
 
 func (s Secret) Reveal() string { return string(s) }

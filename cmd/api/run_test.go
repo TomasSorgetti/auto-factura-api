@@ -5,12 +5,15 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres/postgrestest"
 )
 
 func TestRunShutsDown(t *testing.T) {
 	t.Parallel()
 
-	env := map[string]string{"APP_ENV": "test", "HTTP_ADDR": "127.0.0.1:0"}
+	_, dbURL := postgrestest.NewURL(t)
+	env := map[string]string{"APP_ENV": "test", "HTTP_ADDR": "127.0.0.1:0", "DATABASE_URL": dbURL}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {

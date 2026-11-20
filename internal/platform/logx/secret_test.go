@@ -2,6 +2,7 @@ package logx
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -21,5 +22,20 @@ func TestSecretRedacted(t *testing.T) {
 	}
 	if Secret("hunter2").Reveal() != "hunter2" {
 		t.Fatal("Reveal must return the value")
+	}
+}
+
+func TestSecretRedactedInGoSyntaxAndJSON(t *testing.T) {
+	t.Parallel()
+
+	if got := fmt.Sprintf("%#v", Secret("hunter2")); strings.Contains(got, "hunter2") {
+		t.Fatalf("%%#v leaked: %s", got)
+	}
+	b, err := json.Marshal(struct{ S Secret }{Secret("hunter2")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"S":"[REDACTED]"}` {
+		t.Fatalf("json = %s", b)
 	}
 }
