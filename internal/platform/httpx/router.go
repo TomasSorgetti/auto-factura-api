@@ -162,13 +162,3 @@ func splitPattern(pattern string) (method, path string) {
 	}
 	return method, path
 }
-
-// DenyAll rejects every request as unauthenticated. It is the admin
-// middleware until authentication exists.
-func DenyAll(m *ErrorMapper) Middleware {
-	return func(http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			m.Write(w, r, ErrUnauthenticated)
-		})
-	}
-}

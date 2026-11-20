@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -29,4 +30,12 @@ func readEnvelope(t *testing.T, rec *httptest.ResponseRecorder) errorEnvelope {
 		t.Fatalf("body %q is not an error envelope: %v", rec.Body.String(), err)
 	}
 	return env
+}
+
+func denyAll(m *ErrorMapper) Middleware {
+	return func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m.Write(w, r, ErrUnauthenticated)
+		})
+	}
 }

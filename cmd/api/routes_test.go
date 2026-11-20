@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -11,11 +12,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/auth"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 )
 
 const zeroUUID = "00000000-0000-0000-0000-000000000000"
+
+type denyAuthenticator struct{}
+
+func (denyAuthenticator) Authenticate(context.Context, string) (auth.Principal, error) {
+	return auth.Principal{}, auth.ErrSessionInvalid
+}
+
+func testRouterDeps(log *slog.Logger, errs *httpx.ErrorMapper) routerDeps {
+	return routerDeps{
+		log: log, errors: errs,
+		auth:         &auth.Handler{},
+		requireAdmin: auth.RequireAdmin(denyAuthenticator{}, errs),
+	}
+}
 
 func testDeps() (*slog.Logger, *httpx.ErrorMapper) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -50,7 +66,7 @@ func TestAdminRoutesRequireSession(t *testing.T) {
 	t.Parallel()
 
 	log, errs := testDeps()
-	rt, err := newRouter(routerDeps{log: log, errors: errs})
+	rt, err := newRouter(testRouterDeps(log, errs))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +76,14 @@ func TestAdminRoutesRequireSession(t *testing.T) {
 		{Method: "GET", Path: "/healthz", Surface: httpx.SurfaceSystem},
 		{Method: "GET", Path: "/readyz", Surface: httpx.SurfaceSystem},
 		{Method: "GET", Path: "/api/health", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/login", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/totp", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/totp/setup", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/totp/enroll", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/recovery", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/refresh", Surface: httpx.SurfaceSystem},
+		{Method: "POST", Path: "/api/auth/logout", Surface: httpx.SurfaceSystem},
+		{Method: "GET", Path: "/api/admin/me", Surface: httpx.SurfaceAdmin},
 	} {
 		if !slices.Contains(routes, want) {
 			t.Errorf("route %+v is not registered", want)
@@ -90,7 +114,7 @@ func TestHandlerChain(t *testing.T) {
 	t.Parallel()
 
 	log, errs := testDeps()
-	rt, err := newRouter(routerDeps{log: log, errors: errs})
+	rt, err := newRouter(testRouterDeps(log, errs))
 	if err != nil {
 		t.Fatal(err)
 	}

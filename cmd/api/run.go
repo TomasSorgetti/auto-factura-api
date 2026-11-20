@@ -65,7 +65,11 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	}
 
 	errs := httpx.NewErrorMapper(log, errorRules())
-	rt, err := newRouter(routerDeps{log: log, errors: errs, checks: checks})
+	authHandler, requireAdmin, err := newAuth(cfg, log, errs, pool, rdb)
+	if err != nil {
+		return err
+	}
+	rt, err := newRouter(routerDeps{log: log, errors: errs, checks: checks, auth: authHandler, requireAdmin: requireAdmin})
 	if err != nil {
 		return err
 	}

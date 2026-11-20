@@ -100,7 +100,7 @@ func TestLoggerNeverLogsPath(t *testing.T) {
 
 	log, buf := newTestLogger()
 	m := NewErrorMapper(log, nil)
-	rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: DenyAll(m)})
+	rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: denyAll(m)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestSecurityHeaders(t *testing.T) {
 
 	log, _ := newTestLogger()
 	m := NewErrorMapper(log, nil)
-	rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: DenyAll(m)})
+	rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: denyAll(m)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		log, _ := newTestLogger()
 		m := NewErrorMapper(log, nil)
-		rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: DenyAll(m)})
+		rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: denyAll(m)})
 		if err != nil {
 			t.Fatal(err)
 		}

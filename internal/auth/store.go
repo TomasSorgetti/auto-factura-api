@@ -235,3 +235,16 @@ func truncate(s string, limit int) string {
 	}
 	return string(r[:limit])
 }
+
+// Me returns the email and the unused recovery codes of the user.
+func (s *Store) Me(ctx context.Context, userID string) (email string, recoveryCodesLeft int, err error) {
+	u, err := s.userByID(ctx, userID)
+	if err != nil {
+		return "", 0, err
+	}
+	left, err := s.unusedRecoveryCodes(ctx, userID)
+	if err != nil {
+		return "", 0, err
+	}
+	return u.Email, left, nil
+}

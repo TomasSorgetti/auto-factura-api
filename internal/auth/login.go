@@ -19,6 +19,10 @@ import (
 // stranger cannot lock the account; passwords are limited per IP.
 const accountKey = "login:account"
 
+// passwordGlobalKey bounds password attempts from any source, because the
+// client IP behind a proxy can be spoofed and the per-IP limit then fails.
+const passwordGlobalKey = "login:password-global"
+
 type LoginStep string
 
 const (
@@ -58,6 +62,7 @@ type LoginDeps struct {
 	Cipher          *secrets.Cipher
 	Hasher          *secrets.PasswordHasher
 	Limiter         *redisx.Limiter
+	PasswordLimiter *redisx.Limiter
 	Redis           *redis.Client
 	Devices         *DeviceTracker
 	ChallengePrefix string
@@ -72,6 +77,7 @@ type Login struct {
 	cipher     *secrets.Cipher
 	hasher     *secrets.PasswordHasher
 	limiter    *redisx.Limiter
+	pwLimiter  *redisx.Limiter
 	challenges *challengeStore
 	devices    *DeviceTracker
 	log        *slog.Logger
@@ -81,6 +87,9 @@ type Login struct {
 func NewLogin(d LoginDeps) (*Login, error) {
 	if d.Devices == nil {
 		return nil, errors.New("login: device tracker is required")
+	}
+	if d.PasswordLimiter == nil {
+		return nil, errors.New("login: password limiter is required")
 	}
 	now := d.Now
 	if now == nil {
@@ -96,6 +105,7 @@ func NewLogin(d LoginDeps) (*Login, error) {
 		cipher:     d.Cipher,
 		hasher:     d.Hasher,
 		limiter:    d.Limiter,
+		pwLimiter:  d.PasswordLimiter,
 		challenges: &challengeStore{rdb: d.Redis, prefix: prefix, now: now},
 		devices:    d.Devices,
 		log:        d.Log,
@@ -190,6 +200,13 @@ func totpAAD(uid string) []byte { return []byte("admin_users.totp_secret:" + uid
 func (l *Login) Start(ctx context.Context, email, password, ip string) (LoginStart, error) {
 	if err := l.take(ctx, ipKey(ip)); err != nil {
 		return LoginStart{}, err
+	}
+	d, err := l.pwLimiter.Take(ctx, passwordGlobalKey)
+	if err != nil {
+		return LoginStart{}, err
+	}
+	if d > 0 {
+		return LoginStart{}, ErrTooManyAttempts
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	user, err := l.store.userByEmail(ctx, email)

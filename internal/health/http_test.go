@@ -21,7 +21,7 @@ func newTestRouter(t *testing.T, timeout time.Duration, checks ...Check) *httpx.
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	errs := httpx.NewErrorMapper(log, nil)
-	rt, err := httpx.NewRouter(httpx.RouterConfig{Errors: errs, RequireAdmin: httpx.DenyAll(errs)})
+	rt, err := httpx.NewRouter(httpx.RouterConfig{Errors: errs, RequireAdmin: denyAll(errs)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,4 +131,12 @@ func TestReadyTimeout(t *testing.T) {
 			t.Fatalf("fields = %v", b.Error.Fields)
 		}
 	})
+}
+
+func denyAll(m *httpx.ErrorMapper) httpx.Middleware {
+	return func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m.Write(w, r, httpx.ErrUnauthenticated)
+		})
+	}
 }

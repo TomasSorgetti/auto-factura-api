@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -82,13 +83,16 @@ func newLoginEnv(t *testing.T) *loginEnv {
 	limiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{
 		Prefix: prefix + ":rl", MaxFailures: 5, Window: 15 * time.Minute, MaxBlock: 24 * time.Hour,
 	})
+	pwLimiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{
+		Prefix: prefix + ":rlg", MaxFailures: 50, Window: time.Hour, MaxBlock: 5 * time.Minute,
+	})
 	mail := &emailstest.Fake{}
 	devices, err := NewDeviceTracker(DeviceTrackerDeps{Store: store, Sender: mail, Log: log, Loc: time.UTC})
 	if err != nil {
 		t.Fatal(err)
 	}
 	login, err := NewLogin(LoginDeps{
-		Store: store, Sessions: sessions, Cipher: cipher, Hasher: hasher, Limiter: limiter,
+		Store: store, Sessions: sessions, Cipher: cipher, Hasher: hasher, Limiter: limiter, PasswordLimiter: pwLimiter,
 		Redis: rdb, Devices: devices, ChallengePrefix: prefix + ":ch", Log: log,
 	})
 	if err != nil {
@@ -188,6 +192,23 @@ func TestLoginStart(t *testing.T) {
 			t.Fatalf("other ip err = %v", err)
 		}
 	})
+}
+
+func TestLoginStartGlobalLimit(t *testing.T) {
+	ctx := context.Background()
+	e := newLoginEnv(t)
+	for i := 0; i < 50; i++ {
+		ip := fmt.Sprintf("10.1.%d.%d", i/200, i%200+1)
+		if _, err := e.login.Start(ctx, e.email, "nope", ip); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("attempt %d err = %v", i, err)
+		}
+	}
+	if _, err := e.login.Start(ctx, e.email, loginPassword, "10.2.0.1"); !errors.Is(err, ErrTooManyAttempts) {
+		t.Fatalf("attempt 51 err = %v", err)
+	}
+	if err := e.login.take(ctx, accountKey, factorIPKey("10.2.0.1")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestLoginTOTPSetup(t *testing.T) {

@@ -12,7 +12,7 @@ func newRouter(t *testing.T) *Router {
 	t.Helper()
 	log, _ := newTestLogger()
 	m := NewErrorMapper(log, nil)
-	rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: DenyAll(m)})
+	rt, err := NewRouter(RouterConfig{Errors: m, RequireAdmin: denyAll(m)})
 	if err != nil {
 		t.Fatal(err)
 	}
