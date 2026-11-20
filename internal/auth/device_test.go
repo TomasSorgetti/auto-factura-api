@@ -127,7 +127,7 @@ func TestDeviceTrackerTrack(t *testing.T) {
 		t.Fatalf("second device sent %d mails", len(sent))
 	}
 	if sent[0].Subject != newDeviceSubject || !strings.Contains(sent[0].Text, "190.0.0.1") ||
-		!strings.Contains(sent[0].HTML, "190.0.0.1") || sent[0].To != "admin@example.com" {
+		!strings.Contains(sent[0].HTML, "190.0.0.1") || len(sent[0].To) != 1 || sent[0].To[0] != "admin@example.com" {
 		t.Fatalf("unexpected message: %+v", sent[0])
 	}
 

@@ -304,3 +304,26 @@ func TestLoadWorker(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadWorkerResend(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]string{"APP_ENV": "production", "DATABASE_URL": "postgres://u:p@db.internal:5432/app"}
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"production without key", base, "RESEND_API_KEY"},
+		{"key without from", map[string]string{"APP_ENV": "development", "RESEND_API_KEY": "re_x"}, "EMAIL_FROM"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := LoadWorker(mapEnv(tc.env))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want mention of %s", err, tc.want)
+			}
+		})
+	}
+}

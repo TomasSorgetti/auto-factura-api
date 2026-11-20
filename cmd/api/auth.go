@@ -38,10 +38,7 @@ func newAuth(cfg config.Config, log *slog.Logger, errs *httpx.ErrorMapper, pool 
 	passwordLimiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{Prefix: "rl-pwd", MaxFailures: 50, Window: time.Hour, MaxBlock: 5 * time.Minute})
 	refreshLimiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{Prefix: "rl-refresh", MaxFailures: 30, Window: time.Minute, MaxBlock: 15 * time.Minute})
 
-	var sender emails.Sender = emails.LogSender{Log: log}
-	if cfg.ResendAPIKey != "" {
-		sender = emails.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom)
-	}
+	sender := emails.NewSender(cfg.ResendAPIKey, cfg.EmailFrom, log)
 	devices, err := auth.NewDeviceTracker(auth.DeviceTrackerDeps{
 		Store: store, Sender: sender, Log: log, Loc: cfg.BusinessLocation, BaseURL: cfg.PublicBaseURL,
 	})

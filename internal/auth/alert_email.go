@@ -82,7 +82,7 @@ func newDeviceMessage(to string, d alertData) (emails.Message, error) {
 	text.WriteString("Si no fuiste vos, cambiá la contraseña y cerrá todas las sesiones desde la consola:\n")
 	text.WriteString("admin reset-password\nadmin revoke-sessions\n\n")
 	text.WriteString("Abrir Auto Factura: " + v.LoginURL + "\n")
-	return emails.Message{To: to, Subject: newDeviceSubject, HTML: html.String(), Text: text.String()}, nil
+	return emails.Message{Kind: emails.KindDeviceAlert, To: []string{to}, Subject: newDeviceSubject, HTML: html.String(), Text: text.String()}, nil
 }
 
 func validIP(s string) string {

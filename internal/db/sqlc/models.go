@@ -67,3 +67,20 @@ type AuditEvent struct {
 	RequestID  *string
 	Data       []byte
 }
+
+type EmailDelivery struct {
+	ID                pgtype.UUID
+	Kind              string
+	ToAddrs           []string
+	CcAddrs           []string
+	Subject           string
+	HtmlBody          string
+	TextBody          string
+	Status            string
+	Attempts          int32
+	LastError         *string
+	ProviderMessageID *string
+	SentAt            pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}

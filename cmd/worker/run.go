@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/emails"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
@@ -64,7 +65,10 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
-	workers, periodic, err := newWorkers(workerDeps{pool: pool, hasher: hasher, log: log})
+	workers, periodic, err := newWorkers(workerDeps{
+		pool: pool, hasher: hasher, log: log,
+		sender: emails.NewSender(cfg.ResendAPIKey, cfg.EmailFrom, log),
+	})
 	if err != nil {
 		return err
 	}

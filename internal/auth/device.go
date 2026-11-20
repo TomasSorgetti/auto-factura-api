@@ -163,7 +163,7 @@ func (d *DeviceTracker) track(ctx context.Context, userID, email, deviceID strin
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, deviceAlertTimeout)
 	defer cancel()
-	if err := d.sender.Send(sendCtx, msg); err != nil {
+	if _, err := d.sender.Send(sendCtx, msg); err != nil {
 		return errors.Join(err, d.forget(ctx, id))
 	}
 	return d.store.markLoginDeviceAlerted(ctx, id, now)

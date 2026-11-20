@@ -116,6 +116,8 @@ type WorkerConfig struct {
 	DBStatementTimeout time.Duration
 	ShutdownTimeout    time.Duration
 	Argon2             secrets.Argon2Params
+	ResendAPIKey       logx.Secret
+	EmailFrom          string
 }
 
 // LoadWorker reads the worker variables through getenv and reports every invalid one at once.
@@ -157,6 +159,9 @@ func LoadWorker(getenv func(string) string) (WorkerConfig, error) {
 	argon2, argonErrs := loadArgon2(getenv)
 	cfg.Argon2 = argon2
 	errs = append(errs, argonErrs...)
+	key, from, resendErrs := loadResend(getenv, cfg.Env == EnvProduction)
+	cfg.ResendAPIKey, cfg.EmailFrom = key, from
+	errs = append(errs, resendErrs...)
 
 	if len(errs) > 0 {
 		return WorkerConfig{}, errors.Join(errs...)
@@ -337,19 +342,9 @@ func loadAuth(getenv func(string) string, cfg *Config) []error {
 	cfg.Argon2 = argon2
 	errs = append(errs, argonErrs...)
 
-	cfg.ResendAPIKey = logx.Secret(getenv("RESEND_API_KEY"))
-	if cfg.IsProduction() && cfg.ResendAPIKey == "" {
-		errs = append(errs, errors.New("RESEND_API_KEY: is required in production"))
-	}
-	if from := getenv("EMAIL_FROM"); from != "" {
-		if _, err := mail.ParseAddress(from); err != nil {
-			errs = append(errs, errors.New("EMAIL_FROM: must be a valid address such as Name <user@example.com>"))
-		} else {
-			cfg.EmailFrom = from
-		}
-	} else if cfg.ResendAPIKey != "" {
-		errs = append(errs, errors.New("EMAIL_FROM: is required when RESEND_API_KEY is set"))
-	}
+	key, from, resendErrs := loadResend(getenv, cfg.IsProduction())
+	cfg.ResendAPIKey, cfg.EmailFrom = key, from
+	errs = append(errs, resendErrs...)
 
 	cfg.PublicBaseURL = "http://localhost:5173"
 	if v := getenv("PUBLIC_BASE_URL"); v != "" {
@@ -370,6 +365,25 @@ func loadAuth(getenv func(string) string, cfg *Config) []error {
 	}
 
 	return errs
+}
+
+func loadResend(getenv func(string) string, production bool) (logx.Secret, string, []error) {
+	var errs []error
+	key := logx.Secret(getenv("RESEND_API_KEY"))
+	if production && key == "" {
+		errs = append(errs, errors.New("RESEND_API_KEY: is required in production"))
+	}
+	from := ""
+	if v := getenv("EMAIL_FROM"); v != "" {
+		if _, err := mail.ParseAddress(v); err != nil {
+			errs = append(errs, errors.New("EMAIL_FROM: must be a valid address such as Name <user@example.com>"))
+		} else {
+			from = v
+		}
+	} else if key != "" {
+		errs = append(errs, errors.New("EMAIL_FROM: is required when RESEND_API_KEY is set"))
+	}
+	return key, from, errs
 }
 
 func loadArgon2(getenv func(string) string) (secrets.Argon2Params, []error) {
