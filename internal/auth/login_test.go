@@ -405,3 +405,36 @@ func TestLoginRecoveryCodeWithoutTOTP(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestRescueInvalidatesPendingChallenges(t *testing.T) {
+	t.Parallel()
+	hasher, err := secrets.NewPasswordHasher(secrets.Argon2Params{MemoryKiB: 8192, Time: 1, Threads: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		rescue func(*Accounts) error
+	}{
+		{"reset password", func(a *Accounts) error { return a.ResetPassword(context.Background(), "otra-contraseña-larga") }},
+		{"reset totp", func(a *Accounts) error { return a.ResetTOTP(context.Background()) }},
+		{"revoke sessions", func(a *Accounts) error { return a.RevokeSessions(context.Background()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newLoginEnv(t)
+			secret := e.enableTOTP(t)
+			s := e.start(t)
+			if err := tc.rescue(NewAccounts(e.pool, hasher)); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if _, err := e.login.VerifyTOTP(ctx, s.ChallengeToken.Reveal(), codeFor(t, secret, time.Now()), meta); !errors.Is(err, ErrChallengeInvalid) {
+				t.Fatalf("VerifyTOTP err = %v, want ErrChallengeInvalid", err)
+			}
+			if _, err := e.login.BeginTOTPSetup(ctx, s.ChallengeToken.Reveal()); !errors.Is(err, ErrChallengeInvalid) {
+				t.Fatalf("BeginTOTPSetup err = %v, want ErrChallengeInvalid", err)
+			}
+		})
+	}
+}

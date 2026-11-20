@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -11,20 +12,22 @@ import (
 )
 
 type adminUser struct {
-	ID            string
-	Email         string
-	PasswordHash  string
-	TOTPSecretEnc []byte
-	TOTPEnabled   bool
+	ID                string
+	Email             string
+	PasswordHash      string
+	TOTPSecretEnc     []byte
+	TOTPEnabled       bool
+	SessionsRevokedAt *time.Time
 }
 
 func toAdminUser(u sqlc.AdminUser) *adminUser {
 	return &adminUser{
-		ID:            u.ID.String(),
-		Email:         u.Email,
-		PasswordHash:  u.PasswordHash,
-		TOTPSecretEnc: u.TotpSecretEnc,
-		TOTPEnabled:   u.TotpEnabledAt.Valid,
+		ID:                u.ID.String(),
+		Email:             u.Email,
+		PasswordHash:      u.PasswordHash,
+		TOTPSecretEnc:     u.TotpSecretEnc,
+		TOTPEnabled:       u.TotpEnabledAt.Valid,
+		SessionsRevokedAt: timePtr(u.SessionsRevokedAt),
 	}
 }
 

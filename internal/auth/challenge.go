@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,8 +14,9 @@ import (
 )
 
 type challenge struct {
-	userID  string
-	pending []byte
+	userID   string
+	issuedAt time.Time
+	pending  []byte
 }
 
 // challengeStore keeps login challenges in Redis keyed by the hash of an opaque token.
@@ -33,10 +35,11 @@ func (c *challengeStore) create(ctx context.Context, userID string) (string, tim
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	expiresAt := c.now().Add(challengeTTL)
+	issuedAt := c.now()
+	expiresAt := issuedAt.Add(challengeTTL)
 	key := c.key(token)
 	_, err = c.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, key, "uid", userID, "attempts", 0)
+		p.HSet(ctx, key, "uid", userID, "iat", issuedAt.UnixNano(), "attempts", 0)
 		p.Expire(ctx, key, challengeTTL)
 		return nil
 	})
@@ -55,7 +58,11 @@ func (c *challengeStore) get(ctx context.Context, token string) (challenge, erro
 	if uid == "" {
 		return challenge{}, ErrChallengeInvalid
 	}
-	ch := challenge{userID: uid}
+	nanos, err := strconv.ParseInt(m["iat"], 10, 64)
+	if err != nil {
+		return challenge{}, ErrChallengeInvalid
+	}
+	ch := challenge{userID: uid, issuedAt: time.Unix(0, nanos)}
 	if p := m["pending"]; p != "" {
 		raw, err := base64.StdEncoding.DecodeString(p)
 		if err != nil {

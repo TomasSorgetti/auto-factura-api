@@ -179,6 +179,13 @@ func (s *Store) revokeAll(ctx context.Context, userID string, at time.Time) erro
 	return nil
 }
 
+// RevokeAll invalidates every session of the user in one transaction.
+func (s *Store) RevokeAll(ctx context.Context, userID string, at time.Time) error {
+	return s.InTx(ctx, func(st *Store) error {
+		return st.revokeAll(ctx, userID, at)
+	})
+}
+
 // sessionsRevokedAt returns the user's sessions_revoked_at (nil when unset) or ErrNotFound.
 func (s *Store) sessionsRevokedAt(ctx context.Context, userID string) (*time.Time, error) {
 	u, err := parseUUID(userID)

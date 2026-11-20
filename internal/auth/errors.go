@@ -6,6 +6,8 @@ var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrSessionInvalid     = errors.New("session invalid or expired")
 	ErrNotFound           = errors.New("admin user not found")
+	ErrAdminExists        = errors.New("admin user already exists")
+	ErrWeakPassword       = errors.New("password must be between 12 and 128 bytes")
 )
 
 var (

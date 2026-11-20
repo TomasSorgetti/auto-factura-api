@@ -215,7 +215,5 @@ func (s *Sessions) Authenticate(ctx context.Context, rawAccess string) (Principa
 }
 
 func (s *Sessions) RevokeAll(ctx context.Context, userID string) error {
-	return s.store.InTx(ctx, func(st *Store) error {
-		return st.revokeAll(ctx, userID, s.tokens.now())
-	})
+	return s.store.RevokeAll(ctx, userID, s.tokens.now())
 }

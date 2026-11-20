@@ -151,6 +151,9 @@ func (l *Login) loadChallenge(ctx context.Context, token string) (challenge, *ad
 	if err != nil {
 		return challenge{}, nil, err
 	}
+	if user.SessionsRevokedAt != nil && !user.SessionsRevokedAt.Before(ch.issuedAt) {
+		return challenge{}, nil, ErrChallengeInvalid
+	}
 	return ch, user, nil
 }
 

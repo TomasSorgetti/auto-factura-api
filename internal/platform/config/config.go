@@ -80,6 +80,32 @@ func LoadMigrate(getenv func(string) string) (MigrateConfig, error) {
 	return MigrateConfig{Env: env, DatabaseURL: dbURL}, nil
 }
 
+// AdminConfig is the subset of the configuration that cmd/admin needs.
+type AdminConfig struct {
+	Env         Env
+	DatabaseURL logx.Secret
+	Argon2      secrets.Argon2Params
+}
+
+// LoadAdmin reads APP_ENV, DATABASE_URL and ARGON2_* through getenv.
+func LoadAdmin(getenv func(string) string) (AdminConfig, error) {
+	var errs []error
+	env, err := parseEnv(getenv)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	dbURL, err := parseDatabaseURL(getenv)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	argon2, argonErrs := loadArgon2(getenv)
+	errs = append(errs, argonErrs...)
+	if len(errs) > 0 {
+		return AdminConfig{}, errors.Join(errs...)
+	}
+	return AdminConfig{Env: env, DatabaseURL: dbURL, Argon2: argon2}, nil
+}
+
 func parseEnv(getenv func(string) string) (Env, error) {
 	switch env := Env(getenv("APP_ENV")); env {
 	case EnvDevelopment, EnvTest, EnvProduction:
@@ -240,22 +266,9 @@ func loadAuth(getenv func(string) string, cfg *Config) []error {
 		errs = append(errs, err)
 	}
 
-	cfg.Argon2 = secrets.Argon2Params{MemoryKiB: 19456, Time: 2, Threads: 1}
-	if v, err := uintBetween(getenv, "ARGON2_MEMORY_KIB", 8192, 262144); err != nil {
-		errs = append(errs, err)
-	} else if v != 0 {
-		cfg.Argon2.MemoryKiB = uint32(v)
-	}
-	if v, err := uintBetween(getenv, "ARGON2_TIME", 1, 10); err != nil {
-		errs = append(errs, err)
-	} else if v != 0 {
-		cfg.Argon2.Time = uint32(v)
-	}
-	if v, err := uintBetween(getenv, "ARGON2_THREADS", 1, 8); err != nil {
-		errs = append(errs, err)
-	} else if v != 0 {
-		cfg.Argon2.Threads = uint8(v)
-	}
+	argon2, argonErrs := loadArgon2(getenv)
+	cfg.Argon2 = argon2
+	errs = append(errs, argonErrs...)
 
 	cfg.ResendAPIKey = logx.Secret(getenv("RESEND_API_KEY"))
 	if cfg.IsProduction() && cfg.ResendAPIKey == "" {
@@ -290,6 +303,27 @@ func loadAuth(getenv func(string) string, cfg *Config) []error {
 	}
 
 	return errs
+}
+
+func loadArgon2(getenv func(string) string) (secrets.Argon2Params, []error) {
+	var errs []error
+	p := secrets.Argon2Params{MemoryKiB: 19456, Time: 2, Threads: 1}
+	if v, err := uintBetween(getenv, "ARGON2_MEMORY_KIB", 8192, 262144); err != nil {
+		errs = append(errs, err)
+	} else if v != 0 {
+		p.MemoryKiB = uint32(v)
+	}
+	if v, err := uintBetween(getenv, "ARGON2_TIME", 1, 10); err != nil {
+		errs = append(errs, err)
+	} else if v != 0 {
+		p.Time = uint32(v)
+	}
+	if v, err := uintBetween(getenv, "ARGON2_THREADS", 1, 8); err != nil {
+		errs = append(errs, err)
+	} else if v != 0 {
+		p.Threads = uint8(v)
+	}
+	return p, errs
 }
 
 const minJWTSecretLen = 32
