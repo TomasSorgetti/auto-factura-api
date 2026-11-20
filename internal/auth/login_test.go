@@ -17,6 +17,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/emails/emailstest"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/logx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres/postgrestest"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/redisx"
@@ -31,6 +32,7 @@ type loginEnv struct {
 	rdb    *redis.Client
 	cipher *secrets.Cipher
 	email  string
+	mail   *emailstest.Fake
 }
 
 func newLoginEnv(t *testing.T) *loginEnv {
@@ -80,13 +82,21 @@ func newLoginEnv(t *testing.T) *loginEnv {
 	limiter := redisx.NewLimiter(rdb, redisx.LimiterConfig{
 		Prefix: prefix + ":rl", MaxFailures: 5, Window: 15 * time.Minute, MaxBlock: 24 * time.Hour,
 	})
-	login := NewLogin(LoginDeps{
+	mail := &emailstest.Fake{}
+	devices, err := NewDeviceTracker(DeviceTrackerDeps{Store: store, Sender: mail, Log: log, Loc: time.UTC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := NewLogin(LoginDeps{
 		Store: store, Sessions: sessions, Cipher: cipher, Hasher: hasher, Limiter: limiter,
-		Redis: rdb, ChallengePrefix: prefix + ":ch", Log: log,
+		Redis: rdb, Devices: devices, ChallengePrefix: prefix + ":ch", Log: log,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &loginEnv{
 		sessionEnv: &sessionEnv{pool: pool, sessions: sessions, clock: clock, userID: userID},
-		login:      login, rdb: rdb, cipher: cipher, email: email,
+		login:      login, rdb: rdb, cipher: cipher, email: email, mail: mail,
 	}
 }
 
@@ -436,5 +446,38 @@ func TestRescueInvalidatesPendingChallenges(t *testing.T) {
 				t.Fatalf("BeginTOTPSetup err = %v, want ErrChallengeInvalid", err)
 			}
 		})
+	}
+}
+
+func TestLoginTracksDevice(t *testing.T) {
+	ctx := context.Background()
+	e := newLoginEnv(t)
+	secret := e.enableTOTP(t)
+	_, err := e.pool.Exec(ctx,
+		`INSERT INTO admin_login_devices (user_id, device_hash) VALUES ($1, decode(repeat('ab', 32), 'hex'))`, e.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := e.start(t)
+	res, err := e.login.VerifyTOTP(ctx, s.ChallengeToken.Reveal(), codeFor(t, secret, time.Now()), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isDeviceID(res.DeviceID) {
+		t.Fatalf("device id = %q", res.DeviceID)
+	}
+	sent := e.mail.Sent()
+	if len(sent) != 1 || sent[0].Subject != newDeviceSubject {
+		t.Fatalf("sent = %+v", sent)
+	}
+}
+
+func TestNewLoginRequiresDevices(t *testing.T) {
+	t.Parallel()
+	if _, err := NewLogin(LoginDeps{}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := NewDeviceTracker(DeviceTrackerDeps{}); err == nil {
+		t.Fatal("expected error")
 	}
 }

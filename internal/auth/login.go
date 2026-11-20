@@ -45,6 +45,7 @@ type LoginStart struct {
 type LoginResult struct {
 	Session           IssuedSession
 	UserID            string
+	DeviceID          string
 	Method            LoginMethod
 	RecoveryCodes     []logx.Secret
 	RecoveryCodesLeft int
@@ -58,6 +59,7 @@ type LoginDeps struct {
 	Hasher          *secrets.PasswordHasher
 	Limiter         *redisx.Limiter
 	Redis           *redis.Client
+	Devices         *DeviceTracker
 	ChallengePrefix string
 	Log             *slog.Logger
 	Now             func() time.Time
@@ -71,11 +73,15 @@ type Login struct {
 	hasher     *secrets.PasswordHasher
 	limiter    *redisx.Limiter
 	challenges *challengeStore
+	devices    *DeviceTracker
 	log        *slog.Logger
 	now        func() time.Time
 }
 
-func NewLogin(d LoginDeps) *Login {
+func NewLogin(d LoginDeps) (*Login, error) {
+	if d.Devices == nil {
+		return nil, errors.New("login: device tracker is required")
+	}
 	now := d.Now
 	if now == nil {
 		now = time.Now
@@ -91,9 +97,10 @@ func NewLogin(d LoginDeps) *Login {
 		hasher:     d.Hasher,
 		limiter:    d.Limiter,
 		challenges: &challengeStore{rdb: d.Redis, prefix: prefix, now: now},
+		devices:    d.Devices,
 		log:        d.Log,
 		now:        now,
-	}
+	}, nil
 }
 
 func ipKey(ip string) string { return "login:ip:" + ipOrUnknown(ip) }
@@ -136,6 +143,7 @@ func (l *Login) finish(ctx context.Context, token string, user *adminUser, ip st
 		l.log.WarnContext(ctx, "reset login limiter failed")
 	}
 	result.Session = session
+	result.DeviceID = l.devices.Track(ctx, user.ID, user.Email, meta, result.Method)
 	return result, nil
 }
 

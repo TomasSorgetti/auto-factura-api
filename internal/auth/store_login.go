@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/db/sqlc"
 )
@@ -122,4 +123,47 @@ func (s *Store) unusedRecoveryCodes(ctx context.Context, userID string) (int, er
 		return 0, fmt.Errorf("count recovery codes: %w", err)
 	}
 	return int(n), nil
+}
+
+func (s *Store) countLoginDevices(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	n, err := s.q.CountLoginDevices(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("count login devices: %w", err)
+	}
+	return n, nil
+}
+
+func (s *Store) touchLoginDevice(ctx context.Context, userID pgtype.UUID, hash []byte, userAgent, ip string) (id pgtype.UUID, isNew bool, err error) {
+	row, err := s.q.TouchLoginDevice(ctx, sqlc.TouchLoginDeviceParams{
+		UserID:     userID,
+		DeviceHash: hash,
+		UserAgent:  truncate(userAgent, 500),
+		LastIp:     truncate(ip, 64),
+	})
+	if err != nil {
+		return pgtype.UUID{}, false, fmt.Errorf("touch login device: %w", err)
+	}
+	return row.ID, row.IsNew, nil
+}
+
+func (s *Store) lastLoginDeviceAlertAt(ctx context.Context, userID pgtype.UUID) (*time.Time, error) {
+	v, err := s.q.LastLoginDeviceAlertAt(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("last login device alert: %w", err)
+	}
+	return timePtr(v), nil
+}
+
+func (s *Store) markLoginDeviceAlerted(ctx context.Context, id pgtype.UUID, at time.Time) error {
+	if err := s.q.MarkLoginDeviceAlerted(ctx, sqlc.MarkLoginDeviceAlertedParams{ID: id, AlertedAt: tstz(at)}); err != nil {
+		return fmt.Errorf("mark login device alerted: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) deleteUnalertedLoginDevice(ctx context.Context, id pgtype.UUID) error {
+	if err := s.q.DeleteUnalertedLoginDevice(ctx, id); err != nil {
+		return fmt.Errorf("delete unalerted login device: %w", err)
+	}
+	return nil
 }
