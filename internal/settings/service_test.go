@@ -111,3 +111,79 @@ func TestServiceUpdateAuditFailureRollsBack(t *testing.T) {
 		t.Fatalf("row survived a failed audit: %v", err)
 	}
 }
+
+func arcaEnvEvents(t *testing.T, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(),
+		"SELECT actor_type || ':' || (data->>'from') || '>' || (data->>'to') FROM audit_events WHERE action = 'settings.arca_env_changed' ORDER BY occurred_at, id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestSetArcaEnv(t *testing.T) {
+	pool := postgrestest.New(t)
+	svc := NewService(pool, time.UTC)
+	ctx := context.Background()
+	cli := audit.Actor{Type: audit.ActorCLI}
+
+	if _, err := svc.SetArcaEnv(ctx, ArcaProduction, "20123456786", cli); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("without settings: %v", err)
+	}
+	if _, err := svc.SetArcaEnv(ctx, ArcaEnv("prod"), "", cli); !errors.Is(err, ErrInvalidArcaEnv) {
+		t.Fatalf("invalid env: %v", err)
+	}
+	if _, err := svc.Update(ctx, audit.Actor{Type: audit.ActorSystem}, validInput()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.SetArcaEnv(ctx, ArcaProduction, "20-11111111-2", cli); !errors.Is(err, ErrConfirmationMismatch) {
+		t.Fatalf("wrong cuit: %v", err)
+	}
+	if _, err := svc.SetArcaEnv(ctx, ArcaProduction, "", cli); !errors.Is(err, ErrConfirmationMismatch) {
+		t.Fatalf("empty cuit: %v", err)
+	}
+	if cur, err := svc.Get(ctx); err != nil || cur.ArcaEnv != ArcaHomologation {
+		t.Fatalf("env changed after a rejected confirmation: %+v, %v", cur, err)
+	}
+	if got := arcaEnvEvents(t, pool); len(got) != 0 {
+		t.Fatalf("events after rejection: %v", got)
+	}
+
+	from, err := svc.SetArcaEnv(ctx, ArcaProduction, "20-12345678-6", cli)
+	if err != nil || from != ArcaHomologation {
+		t.Fatalf("to production: from %q, err %v", from, err)
+	}
+	if got := arcaEnvEvents(t, pool); len(got) != 1 || got[0] != "cli:homologation>production" {
+		t.Fatalf("events: %v", got)
+	}
+
+	from, err = svc.SetArcaEnv(ctx, ArcaProduction, "", cli)
+	if err != nil || from != ArcaProduction {
+		t.Fatalf("repeat: from %q, err %v", from, err)
+	}
+	if got := arcaEnvEvents(t, pool); len(got) != 1 {
+		t.Fatalf("repeat wrote an event: %v", got)
+	}
+
+	from, err = svc.SetArcaEnv(ctx, ArcaHomologation, "", cli)
+	if err != nil || from != ArcaProduction {
+		t.Fatalf("back to homologation: from %q, err %v", from, err)
+	}
+	if got := arcaEnvEvents(t, pool); len(got) != 2 || got[1] != "cli:production>homologation" {
+		t.Fatalf("events: %v", got)
+	}
+}

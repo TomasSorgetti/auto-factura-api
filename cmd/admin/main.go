@@ -15,16 +15,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/TomasSorgetti/auto-factura-api/internal/audit"
 	"github.com/TomasSorgetti/auto-factura-api/internal/auth"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/secrets"
+	"github.com/TomasSorgetti/auto-factura-api/internal/settings"
 )
 
 var errWriteFailed = errors.New("could not write the generated password; the account was changed: run reset-password to set a new one")
 
 const (
-	usage            = "usage: admin create-user --email <email> [--password-stdin] | reset-password [--password-stdin] | reset-totp | revoke-sessions | prune-tokens"
+	usage            = "usage: admin create-user --email <email> [--password-stdin] | reset-password [--password-stdin] | reset-totp | revoke-sessions | prune-tokens | set-arca-env <homologation|production> [--confirm-cuit <cuit>]"
 	maxPasswordInput = 256
 )
 
@@ -46,6 +48,8 @@ type options struct {
 	cmd           string
 	email         string
 	passwordStdin bool
+	arcaEnv       settings.ArcaEnv
+	confirmCUIT   string
 }
 
 func parseArgs(args []string) (options, error) {
@@ -62,6 +66,18 @@ func parseArgs(args []string) (options, error) {
 	case "reset-password":
 		fs.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the password from stdin")
 	case "reset-totp", "revoke-sessions", "prune-tokens":
+	case "set-arca-env":
+		fs.StringVar(&opts.confirmCUIT, "confirm-cuit", "", "CUIT to type to switch to production")
+		if len(args) < 2 {
+			return options{}, errors.New(usage)
+		}
+		opts.arcaEnv = settings.ArcaEnv(args[1])
+		switch opts.arcaEnv {
+		case settings.ArcaHomologation, settings.ArcaProduction:
+		default:
+			return options{}, fmt.Errorf("invalid environment %q: %s", args[1], usage)
+		}
+		args = args[1:]
 	default:
 		return options{}, fmt.Errorf("unknown command %q: %s", opts.cmd, usage)
 	}
@@ -137,6 +153,22 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdin i
 			return err
 		}
 		fmt.Fprintln(stdout, "all sessions revoked")
+	case "set-arca-env":
+		from, err := settings.NewService(pool, time.UTC).SetArcaEnv(ctx, opts.arcaEnv, opts.confirmCUIT, audit.Actor{Type: audit.ActorCLI})
+		if err != nil {
+			if errors.Is(err, settings.ErrNotConfigured) {
+				return errors.New("load fiscal settings first")
+			}
+			return err
+		}
+		if from == opts.arcaEnv {
+			fmt.Fprintf(stdout, "arca environment already %s\n", from)
+			return nil
+		}
+		fmt.Fprintf(stdout, "arca environment changed: %s -> %s\n", from, opts.arcaEnv)
+		if opts.arcaEnv == settings.ArcaProduction {
+			fmt.Fprintln(stdout, "from now on invoices are real fiscal documents")
+		}
 	case "prune-tokens":
 		n, err := accounts.PruneExpiredTokens(ctx)
 		if err != nil {

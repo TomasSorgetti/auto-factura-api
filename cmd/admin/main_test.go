@@ -96,3 +96,31 @@ func TestRunCreateUserGenerated(t *testing.T) {
 		t.Fatalf("second create err = %v", err)
 	}
 }
+
+func TestParseArgsSetArcaEnv(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantErr bool
+		env     string
+		confirm string
+	}{
+		{"no value", []string{"set-arca-env"}, true, "", ""},
+		{"bad value", []string{"set-arca-env", "prod"}, true, "", ""},
+		{"flag as value", []string{"set-arca-env", "--confirm-cuit", "x"}, true, "", ""},
+		{"production without confirm", []string{"set-arca-env", "production"}, false, "production", ""},
+		{"production with confirm", []string{"set-arca-env", "production", "--confirm-cuit", "20-12345678-6"}, false, "production", "20-12345678-6"},
+		{"homologation", []string{"set-arca-env", "homologation"}, false, "homologation", ""},
+		{"extra argument", []string{"set-arca-env", "homologation", "now"}, true, "", ""},
+	} {
+		opts, err := parseArgs(tc.args)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err = %v", tc.name, err)
+			continue
+		}
+		if err == nil && (string(opts.arcaEnv) != tc.env || opts.confirmCUIT != tc.confirm) {
+			t.Errorf("%s: opts = %+v", tc.name, opts)
+		}
+	}
+}

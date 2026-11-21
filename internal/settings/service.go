@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/audit"
+	"github.com/TomasSorgetti/auto-factura-api/internal/cuit"
 	"github.com/TomasSorgetti/auto-factura-api/internal/db/sqlc"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/postgres"
 )
@@ -65,4 +66,43 @@ func (s *Service) Update(ctx context.Context, actor audit.Actor, in Input) (Sett
 		return Settings{}, err
 	}
 	return out, nil
+}
+
+// SetArcaEnv switches the ARCA environment and returns the previous one; from == env means nothing was written.
+// Moving to production requires confirmCUIT to match the stored CUIT.
+func (s *Service) SetArcaEnv(ctx context.Context, env ArcaEnv, confirmCUIT string, actor audit.Actor) (ArcaEnv, error) {
+	switch env {
+	case ArcaHomologation, ArcaProduction:
+	default:
+		return "", ErrInvalidArcaEnv
+	}
+	var from ArcaEnv
+	err := postgres.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+		current, err := get(ctx, q, true)
+		if err != nil {
+			return err
+		}
+		from = current.ArcaEnv
+		if from == env {
+			return nil
+		}
+		if env == ArcaProduction && cuit.Normalize(confirmCUIT) != current.CUIT {
+			return ErrConfirmationMismatch
+		}
+		if _, err := q.SetArcaEnv(ctx, string(env)); err != nil {
+			return fmt.Errorf("set arca env: %w", err)
+		}
+		if err := audit.Record(ctx, tx, audit.Event{
+			Actor: actor, Action: audit.ActionArcaEnvChanged, EntityType: "settings",
+			Data: map[string]string{"from": string(from), "to": string(env)},
+		}); err != nil {
+			return fmt.Errorf("audit arca env change: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return from, nil
 }
