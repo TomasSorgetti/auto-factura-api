@@ -68,6 +68,30 @@ type AuditEvent struct {
 	Data       []byte
 }
 
+type Client struct {
+	ID           pgtype.UUID
+	LegalName    string
+	Cuit         string
+	TaxCondition string
+	Address      string
+	NotesEnc     []byte
+	ArchivedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type ClientContact struct {
+	ID           pgtype.UUID
+	ClientID     pgtype.UUID
+	NameEnc      []byte
+	EmailEnc     []byte
+	EmailHmac    []byte
+	Role         string
+	PortalAccess bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type EmailDelivery struct {
 	ID                pgtype.UUID
 	Kind              string
