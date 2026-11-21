@@ -143,6 +143,30 @@ func (q *Queries) CreateContact(ctx context.Context, arg CreateContactParams) (C
 	return i, err
 }
 
+const deleteClient = `-- name: DeleteClient :execrows
+DELETE FROM clients WHERE id = $1
+`
+
+func (q *Queries) DeleteClient(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteClient, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteClientContacts = `-- name: DeleteClientContacts :execrows
+DELETE FROM client_contacts WHERE client_id = $1
+`
+
+func (q *Queries) DeleteClientContacts(ctx context.Context, clientID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteClientContacts, clientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteContact = `-- name: DeleteContact :execrows
 DELETE FROM client_contacts WHERE id = $1 AND client_id = $2
 `

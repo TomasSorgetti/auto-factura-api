@@ -3,6 +3,7 @@ package clients
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -378,6 +379,37 @@ func (s *Service) UpdateContact(ctx context.Context, actor audit.Actor, clientID
 		return Contact{}, err
 	}
 	return out, nil
+}
+
+// Delete removes the client and all its contacts for good, archived or not.
+// The audit event keeps only the client id and the number of contacts removed.
+func (s *Service) Delete(ctx context.Context, actor audit.Actor, id string) error {
+	uid, err := parseID(id)
+	if err != nil {
+		return err
+	}
+	id = uid.String()
+	return postgres.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		q := sqlc.New(tx)
+		if _, err := lockClient(ctx, q, uid); err != nil {
+			return err
+		}
+		n, err := q.DeleteClientContacts(ctx, uid)
+		if err != nil {
+			return fmt.Errorf("delete contacts of client %s: %w", id, err)
+		}
+		deleted, err := q.DeleteClient(ctx, uid)
+		if err != nil {
+			return fmt.Errorf("delete client %s: %w", id, err)
+		}
+		if deleted == 0 {
+			return ErrNotFound
+		}
+		return recordEvent(ctx, tx, audit.Event{
+			Actor: actor, Action: audit.ActionClientDeleted, EntityType: entityClient, EntityID: id,
+			Data: map[string]string{"contacts": strconv.FormatInt(n, 10)},
+		})
+	})
 }
 
 func (s *Service) DeleteContact(ctx context.Context, actor audit.Actor, clientID, contactID string) error {

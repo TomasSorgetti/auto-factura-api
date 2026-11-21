@@ -57,3 +57,9 @@ RETURNING *;
 
 -- name: DeleteContact :execrows
 DELETE FROM client_contacts WHERE id = $1 AND client_id = $2;
+
+-- name: DeleteClientContacts :execrows
+DELETE FROM client_contacts WHERE client_id = $1;
+
+-- name: DeleteClient :execrows
+DELETE FROM clients WHERE id = $1;

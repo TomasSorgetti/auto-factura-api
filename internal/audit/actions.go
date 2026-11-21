@@ -18,6 +18,7 @@ const (
 	ActionClientUpdated    Action = "client.updated"
 	ActionClientArchived   Action = "client.archived"
 	ActionClientUnarchived Action = "client.unarchived"
+	ActionClientDeleted    Action = "client.deleted"
 	ActionContactCreated   Action = "client.contact_created"
 	ActionContactUpdated   Action = "client.contact_updated"
 	ActionContactDeleted   Action = "client.contact_deleted"
@@ -28,7 +29,7 @@ func (a Action) valid() bool {
 	case ActionLoginSucceeded, ActionLoginFailed, ActionNewDevice, ActionLogout, ActionRefreshReplay,
 		ActionTOTPEnrolled, ActionRecoveryCodeUsed, ActionUserCreated, ActionPasswordReset, ActionTOTPReset,
 		ActionSessionsRevoked, ActionSettingsUpdated, ActionArcaEnvChanged,
-		ActionClientCreated, ActionClientUpdated, ActionClientArchived, ActionClientUnarchived,
+		ActionClientCreated, ActionClientUpdated, ActionClientArchived, ActionClientUnarchived, ActionClientDeleted,
 		ActionContactCreated, ActionContactUpdated, ActionContactDeleted:
 		return true
 	}

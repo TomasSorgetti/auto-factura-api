@@ -110,8 +110,8 @@ func TestClientsHTTPUnauthenticated(t *testing.T) {
 			t.Errorf("%s %s: status %d body %s", route.Method, route.Path, rec.Code, rec.Body)
 		}
 	}
-	if n := len(rt.Routes()); n != 9 {
-		t.Fatalf("routes = %d, want 9", n)
+	if n := len(rt.Routes()); n != 10 {
+		t.Fatalf("routes = %d, want 10", n)
 	}
 }
 
@@ -275,6 +275,19 @@ func TestClientsHTTPFlow(t *testing.T) {
 	}
 	if d := decodeData[detailDTO](t, doJSON(rt, "GET", base, "")); len(d.Contacts) != 0 {
 		t.Fatalf("contacts after delete = %+v", d.Contacts)
+	}
+
+	rec = doJSON(rt, "DELETE", base, "")
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Fatalf("delete client: %d %s", rec.Code, rec.Body)
+	}
+	for _, method := range []string{"GET", "DELETE"} {
+		if rec = doJSON(rt, method, base, ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s deleted client: %d %s", method, rec.Code, rec.Body)
+		}
+	}
+	if rec = doJSON(rt, "DELETE", "/api/admin/clients/not-a-uuid", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("delete invalid id: %d %s", rec.Code, rec.Body)
 	}
 }
 

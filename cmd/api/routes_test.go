@@ -94,6 +94,7 @@ func TestAdminRoutesRequireSession(t *testing.T) {
 		{Method: "POST", Path: "/api/admin/clients", Surface: httpx.SurfaceAdmin},
 		{Method: "GET", Path: "/api/admin/clients/{id}", Surface: httpx.SurfaceAdmin},
 		{Method: "PUT", Path: "/api/admin/clients/{id}", Surface: httpx.SurfaceAdmin},
+		{Method: "DELETE", Path: "/api/admin/clients/{id}", Surface: httpx.SurfaceAdmin},
 		{Method: "POST", Path: "/api/admin/clients/{id}/archive", Surface: httpx.SurfaceAdmin},
 		{Method: "POST", Path: "/api/admin/clients/{id}/unarchive", Surface: httpx.SurfaceAdmin},
 		{Method: "POST", Path: "/api/admin/clients/{id}/contacts", Surface: httpx.SurfaceAdmin},

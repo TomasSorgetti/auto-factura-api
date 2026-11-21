@@ -483,3 +483,70 @@ func TestServiceNonCanonicalID(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceDelete(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	active := e.client(t, 1, "A")
+	e.contact(t, active.ID, "a1@example.com")
+	e.contact(t, active.ID, "a2@example.com")
+	archived := e.client(t, 2, "B")
+	e.contact(t, archived.ID, "b1@example.com")
+	if _, err := e.svc.Archive(ctx, e.actor, archived.ID); err != nil {
+		t.Fatal(err)
+	}
+	other := e.client(t, 3, "C")
+	e.contact(t, other.ID, "c1@example.com")
+
+	if err := e.svc.Delete(ctx, e.actor, strings.ToUpper(active.ID)); err != nil {
+		t.Fatalf("Delete active: %v", err)
+	}
+	if err := e.svc.Delete(ctx, e.actor, archived.ID); err != nil {
+		t.Fatalf("Delete archived: %v", err)
+	}
+	for _, id := range []string{active.ID, archived.ID} {
+		if _, err := e.svc.Get(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Get deleted %s: %v", id, err)
+		}
+		if err := e.svc.Delete(ctx, e.actor, id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Delete twice %s: %v", id, err)
+		}
+	}
+	if err := e.svc.Delete(ctx, e.actor, "not-an-id"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Delete invalid id: %v", err)
+	}
+	got, err := e.svc.Get(ctx, other.ID)
+	if err != nil || len(got.Contacts) != 1 {
+		t.Fatalf("other client untouched: %+v, %v", got, err)
+	}
+
+	var left int
+	if err := e.pool.QueryRow(ctx,
+		"SELECT count(*) FROM client_contacts WHERE client_id = ANY($1::uuid[])", []string{active.ID, archived.ID}).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Errorf("contacts left = %d", left)
+	}
+
+	events := e.events(t, "client.deleted")
+	if len(events) != 2 {
+		t.Fatalf("events = %v", events)
+	}
+	if !strings.Contains(events[0], `"contacts": "2"`) || !strings.Contains(events[1], `"contacts": "1"`) {
+		t.Errorf("contact counts = %v", events)
+	}
+	var ids int
+	if err := e.pool.QueryRow(ctx,
+		"SELECT count(*) FROM audit_events WHERE action = 'client.deleted' AND entity_id = ANY($1)", []string{active.ID, archived.ID}).Scan(&ids); err != nil {
+		t.Fatal(err)
+	}
+	if ids != 2 {
+		t.Errorf("canonical entity ids = %d, want 2", ids)
+	}
+	for _, ev := range events {
+		if strings.Contains(ev, "example.com") || strings.Contains(ev, "Persona") || strings.Contains(ev, cuitFor(1)) {
+			t.Errorf("event leaks personal data: %s", ev)
+		}
+	}
+}

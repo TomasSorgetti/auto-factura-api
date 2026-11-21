@@ -22,6 +22,7 @@ func (h *Handler) Register(rt *httpx.Router) {
 	rt.Admin("POST /api/admin/clients", h.create)
 	rt.Admin("GET /api/admin/clients/{id}", h.get)
 	rt.Admin("PUT /api/admin/clients/{id}", h.update)
+	rt.Admin("DELETE /api/admin/clients/{id}", h.delete)
 	rt.Admin("POST /api/admin/clients/{id}/archive", h.archive)
 	rt.Admin("POST /api/admin/clients/{id}/unarchive", h.unarchive)
 	rt.Admin("POST /api/admin/clients/{id}/contacts", h.createContact)
@@ -198,6 +199,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.JSON(w, http.StatusOK, toDetailDTO(d))
+}
+
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) error {
+	actor, err := actorFrom(r)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.Delete(r.Context(), actor, r.PathValue("id")); err != nil {
+		return err
+	}
+	httpx.NoContent(w)
+	return nil
 }
 
 func (h *Handler) archive(w http.ResponseWriter, r *http.Request) error {
