@@ -14,13 +14,22 @@ const (
 	ActionSessionsRevoked  Action = "auth.sessions_revoked"
 	ActionSettingsUpdated  Action = "settings.updated"
 	ActionArcaEnvChanged   Action = "settings.arca_env_changed"
+	ActionClientCreated    Action = "client.created"
+	ActionClientUpdated    Action = "client.updated"
+	ActionClientArchived   Action = "client.archived"
+	ActionClientUnarchived Action = "client.unarchived"
+	ActionContactCreated   Action = "client.contact_created"
+	ActionContactUpdated   Action = "client.contact_updated"
+	ActionContactDeleted   Action = "client.contact_deleted"
 )
 
 func (a Action) valid() bool {
 	switch a {
 	case ActionLoginSucceeded, ActionLoginFailed, ActionNewDevice, ActionLogout, ActionRefreshReplay,
 		ActionTOTPEnrolled, ActionRecoveryCodeUsed, ActionUserCreated, ActionPasswordReset, ActionTOTPReset,
-		ActionSessionsRevoked, ActionSettingsUpdated, ActionArcaEnvChanged:
+		ActionSessionsRevoked, ActionSettingsUpdated, ActionArcaEnvChanged,
+		ActionClientCreated, ActionClientUpdated, ActionClientArchived, ActionClientUnarchived,
+		ActionContactCreated, ActionContactUpdated, ActionContactDeleted:
 		return true
 	}
 	return false
