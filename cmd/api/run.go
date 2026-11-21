@@ -79,8 +79,12 @@ func run(ctx context.Context, getenv func(string) string, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
+	clientsHandler, err := newClientsHandler(cfg, pool)
+	if err != nil {
+		return err
+	}
 	rt, err := newRouter(routerDeps{log: log, errors: errs, checks: checks, auth: authHandler,
-		settings: settings.NewHandler(settings.NewService(pool, cfg.BusinessLocation)), requireAdmin: requireAdmin})
+		settings: settings.NewHandler(settings.NewService(pool, cfg.BusinessLocation)), clients: clientsHandler, requireAdmin: requireAdmin})
 	if err != nil {
 		return err
 	}

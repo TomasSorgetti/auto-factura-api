@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/auth"
+	"github.com/TomasSorgetti/auto-factura-api/internal/clients"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 )
 
@@ -17,5 +18,10 @@ func errorRules() []httpx.ErrorRule {
 		{Target: auth.ErrTooManyAttempts, Status: http.StatusTooManyRequests, Code: "TOO_MANY_ATTEMPTS", Message: "too many attempts, try again later"},
 		{Target: auth.ErrTOTPAlreadyEnabled, Status: http.StatusConflict, Code: "TOTP_ALREADY_ENABLED", Message: "authenticator already enabled"},
 		{Target: auth.ErrTOTPNotEnabled, Status: http.StatusConflict, Code: "TOTP_NOT_ENABLED", Message: "authenticator not enabled"},
+		{Target: clients.ErrNotFound, Status: http.StatusNotFound, Code: "NOT_FOUND", Message: "resource not found"},
+		{Target: clients.ErrCUITTaken, Status: http.StatusConflict, Code: "CLIENT_CUIT_TAKEN", Message: "a client with this cuit already exists"},
+		{Target: clients.ErrArchived, Status: http.StatusConflict, Code: "CLIENT_ARCHIVED", Message: "client is archived"},
+		{Target: clients.ErrEmailTaken, Status: http.StatusConflict, Code: "CONTACT_EMAIL_TAKEN", Message: "contact email already exists for this client"},
+		{Target: clients.ErrContactLimit, Status: http.StatusConflict, Code: "CONTACT_LIMIT_REACHED", Message: "client contact limit reached"},
 	}
 }

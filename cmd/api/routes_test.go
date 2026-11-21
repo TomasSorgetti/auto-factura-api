@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/auth"
+	"github.com/TomasSorgetti/auto-factura-api/internal/clients"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/config"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/settings"
@@ -31,6 +32,7 @@ func testRouterDeps(log *slog.Logger, errs *httpx.ErrorMapper) routerDeps {
 		log: log, errors: errs,
 		auth:         &auth.Handler{},
 		settings:     settings.NewHandler(nil),
+		clients:      clients.NewHandler(nil),
 		requireAdmin: auth.RequireAdmin(denyAuthenticator{}, errs),
 	}
 }
@@ -88,6 +90,15 @@ func TestAdminRoutesRequireSession(t *testing.T) {
 		{Method: "GET", Path: "/api/admin/me", Surface: httpx.SurfaceAdmin},
 		{Method: "GET", Path: "/api/admin/settings", Surface: httpx.SurfaceAdmin},
 		{Method: "PUT", Path: "/api/admin/settings", Surface: httpx.SurfaceAdmin},
+		{Method: "GET", Path: "/api/admin/clients", Surface: httpx.SurfaceAdmin},
+		{Method: "POST", Path: "/api/admin/clients", Surface: httpx.SurfaceAdmin},
+		{Method: "GET", Path: "/api/admin/clients/{id}", Surface: httpx.SurfaceAdmin},
+		{Method: "PUT", Path: "/api/admin/clients/{id}", Surface: httpx.SurfaceAdmin},
+		{Method: "POST", Path: "/api/admin/clients/{id}/archive", Surface: httpx.SurfaceAdmin},
+		{Method: "POST", Path: "/api/admin/clients/{id}/unarchive", Surface: httpx.SurfaceAdmin},
+		{Method: "POST", Path: "/api/admin/clients/{id}/contacts", Surface: httpx.SurfaceAdmin},
+		{Method: "PUT", Path: "/api/admin/clients/{id}/contacts/{contactId}", Surface: httpx.SurfaceAdmin},
+		{Method: "DELETE", Path: "/api/admin/clients/{id}/contacts/{contactId}", Surface: httpx.SurfaceAdmin},
 	} {
 		if !slices.Contains(routes, want) {
 			t.Errorf("route %+v is not registered", want)

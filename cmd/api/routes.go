@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/TomasSorgetti/auto-factura-api/internal/auth"
+	"github.com/TomasSorgetti/auto-factura-api/internal/clients"
 	"github.com/TomasSorgetti/auto-factura-api/internal/health"
 	"github.com/TomasSorgetti/auto-factura-api/internal/platform/httpx"
 	"github.com/TomasSorgetti/auto-factura-api/internal/settings"
@@ -18,6 +19,7 @@ type routerDeps struct {
 	checks       []health.Check
 	auth         *auth.Handler
 	settings     *settings.Handler
+	clients      *clients.Handler
 	requireAdmin httpx.Middleware
 }
 
@@ -27,6 +29,9 @@ func newRouter(d routerDeps) (*httpx.Router, error) {
 	}
 	if d.settings == nil {
 		return nil, errors.New("new router: settings handler is required")
+	}
+	if d.clients == nil {
+		return nil, errors.New("new router: clients handler is required")
 	}
 	rt, err := httpx.NewRouter(httpx.RouterConfig{
 		Errors:       d.errors,
@@ -38,5 +43,6 @@ func newRouter(d routerDeps) (*httpx.Router, error) {
 	health.NewHandler(d.log, 2*time.Second, d.checks...).Register(rt)
 	d.auth.Register(rt)
 	d.settings.Register(rt)
+	d.clients.Register(rt)
 	return rt, nil
 }
